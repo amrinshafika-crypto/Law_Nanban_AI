@@ -1,0 +1,87 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: rgb(15 35 61 / 0.08);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-navy-50 text-navy-900 font-sans antialiased;
+  }
+  ::selection {
+    @apply bg-accent-200 text-navy-900;
+  }
+  scrollbar-width: thin;
+  scrollbar-color: rgb(15 35 61 / 0.2) transparent;
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl border border-navy-100 shadow-card;
+  }
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-navy-800 text-white hover:bg-navy-700 shadow-sm;
+  }
+  .btn-accent {
+    @apply btn bg-accent-600 text-white hover:bg-accent-500 shadow-sm;
+  }
+  .btn-gold {
+    @apply btn bg-gold-500 text-navy-900 hover:bg-gold-400 shadow-sm;
+  }
+  .btn-ghost {
+    @apply btn text-navy-700 hover:bg-navy-100;
+  }
+  .btn-outline {
+    @apply btn border border-navy-200 text-navy-700 hover:bg-navy-50 bg-white;
+  }
+  .input {
+    @apply w-full px-3.5 py-2.5 rounded-lg border border-navy-200 bg-white text-navy-900 placeholder:text-navy-300 focus:outline-none focus:ring-2 focus:ring-accent-400 focus:border-transparent transition-all text-sm;
+  }
+  .label {
+    @apply block text-sm font-medium text-navy-700 mb-1.5;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .glass {
+    background: rgb(255 255 255 / 0.7);
+    backdrop-filter: blur(12px);
+  }
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-navy-100/80 hover:text-white hover:bg-white/10 transition-all duration-200;
+  }
+  .nav-link-active {
+    @apply bg-white/15 text-white;
+  }
+  .stat-card {
+    @apply card p-5 card-hover;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(15 35 61 / 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(15 35 61 / 0.25);
+}
