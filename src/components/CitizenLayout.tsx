@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Home, MessageCircle, Scale, FileText, HeartHandshake,
-  FolderSearch, Languages, LogOut, Menu, X,
+  FolderSearch, Languages, LogOut, Menu, X, BookOpen,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/context/AuthContext';
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/portal', labelKey: 'home', icon: Home, end: true },
   { to: '/portal/ask', labelKey: 'ask', icon: MessageCircle },
   { to: '/portal/rights', labelKey: 'rights', icon: Scale },
+  { to: '/portal/legal-library', labelKey: 'library', icon: BookOpen },
   { to: '/portal/explain', labelKey: 'explain', icon: FileText },
   { to: '/portal/aid', labelKey: 'aid', icon: HeartHandshake },
   { to: '/portal/case-status', labelKey: 'caseStatus', icon: FolderSearch },
@@ -23,11 +24,17 @@ export function CitizenLayout({ children, lang, setLang }: { children: ReactNode
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const t = useTranslations(lang);
 
   async function handleSignOut() {
-    await signOut();
-    navigate('/');
+    setSignOutError(null);
+    const result = await signOut();
+    if (result.error) {
+      setSignOutError(result.error);
+      return;
+    }
+    navigate('/', { replace: true });
   }
 
   return (
@@ -44,7 +51,7 @@ export function CitizenLayout({ children, lang, setLang }: { children: ReactNode
               {lang === 'en' ? 'தமிழ்' : 'English'}
             </button>
             {profile ? (
-              <button onClick={handleSignOut} className="p-2 rounded-lg hover:bg-white/10">
+              <button onClick={handleSignOut} className="p-2 rounded-lg hover:bg-white/10" aria-label={lang === 'ta' ? 'வெளியேறு' : 'Sign out'}>
                 <LogOut size={18} />
               </button>
             ) : (
@@ -52,13 +59,14 @@ export function CitizenLayout({ children, lang, setLang }: { children: ReactNode
                 onClick={() => navigate('/signin')}
                 className="px-3 py-1.5 rounded-lg text-sm font-medium bg-gold-500 text-navy-900 hover:bg-gold-400"
               >
-                Sign in
+                {lang === 'ta' ? 'உள்நுழை' : 'Sign in'}
               </button>
             )}
             <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden p-2 rounded-lg hover:bg-white/10">
               {menuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
+          {signOutError && <p role="alert" className="px-4 pb-2 text-xs text-danger-300 text-center">{signOutError}</p>}
         </div>
       </header>
 
@@ -119,7 +127,7 @@ export function CitizenLayout({ children, lang, setLang }: { children: ReactNode
 
       <footer className="bg-navy-900 text-navy-300 py-6 px-4 text-center text-xs">
         <p>{t.appName} — {t.tagline}</p>
-        <p className="mt-1">General legal information, not legal advice. Consult a qualified lawyer for your specific situation.</p>
+        <p className="mt-1">{lang === 'ta' ? 'பொதுவான சட்டத் தகவல் மட்டுமே; சட்டப் பிரதிநிதித்துவமோ தகுதியான வழக்கறிஞரின் ஆலோசனைக்கு மாற்றோ அல்ல.' : 'General legal information only. This is not legal representation or a substitute for advice from a qualified lawyer.'}</p>
       </footer>
     </div>
   );

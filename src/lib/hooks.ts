@@ -2,6 +2,57 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Case, Hearing, CaseEvent, DocumentRecord, LegalReference, LegalAidResource, AgentTask } from '@/types';
 
+const fallbackLegalAidResources: LegalAidResource[] = [
+  {
+    id: 'nalsa-national',
+    name: 'NALSA — National Legal Services Authority',
+    authority_type: 'national',
+    state: 'India',
+    district: null,
+    address: 'NALSA Secretariat, Supreme Court Complex, New Delhi',
+    phone: '+91-11-2338-2124',
+    email: 'nalsa-dte@nic.in',
+    website: 'https://nalsa.gov.in/',
+    description: 'National legal-aid body responsible for legal services and legal-aid policy in India.',
+    services: ['Legal advice', 'Legal representation', 'Lok Adalat guidance'],
+    eligibility: 'Eligible persons include women, children, SC/ST communities, disabled persons, migrants, industrial workers and persons with limited means.',
+    language: ['en', 'hi'],
+    verified: true,
+  },
+  {
+    id: 'tnslsa',
+    name: 'Tamil Nadu State Legal Services Authority',
+    authority_type: 'state',
+    state: 'Tamil Nadu',
+    district: null,
+    address: 'High Court Campus, Chennai',
+    phone: '+91-44-2534-9000',
+    email: 'tlsa@nic.in',
+    website: 'https://tamilnadulegalservicesauthority.tn.gov.in/',
+    description: 'State legal-services authority for Tamil Nadu, including legal aid, lok adalats and legal awareness.',
+    services: ['Free legal aid', 'Legal advice', 'Lok Adalat support'],
+    eligibility: 'Eligible persons can apply based on income limits, vulnerability and legal need as set out by the legal-services authorities.',
+    language: ['en', 'ta'],
+    verified: true,
+  },
+  {
+    id: 'tn-dlsa-chennai',
+    name: 'Chennai District Legal Services Authority',
+    authority_type: 'district',
+    state: 'Tamil Nadu',
+    district: 'Chennai',
+    address: 'Chennai District Court Complex',
+    phone: '+91-44-2524-3000',
+    email: 'dlsc-chennai@tn.gov.in',
+    website: 'https://tnslsa.tn.gov.in/',
+    description: 'District-level legal-aid authority for Chennai.',
+    services: ['Legal aid', 'Advice', 'Case assistance'],
+    eligibility: 'Income and vulnerability criteria apply; eligible persons should contact the authority directly.',
+    language: ['en', 'ta'],
+    verified: true,
+  },
+];
+
 export function useCases() {
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
@@ -9,6 +60,7 @@ export function useCases() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const { data, error } = await supabase
       .from('cases')
       .select('*')
@@ -25,100 +77,145 @@ export function useCases() {
 export function useCase(id: string | undefined) {
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
+    setError(null);
+    setCaseData(null);
     if (!id) { setLoading(false); return; }
     supabase.from('cases').select('*').eq('id', id).maybeSingle()
-      .then(({ data }) => {
-        setCaseData(data as Case | null);
+      .then(({ data, error: queryError }) => {
+        if (queryError) setError(queryError.message);
+        else setCaseData(data as Case | null);
         setLoading(false);
       });
   }, [id]);
 
-  return { caseData, loading };
+  return { caseData, loading, error };
 }
 
 export function useCaseEvents(caseId: string | undefined) {
   const [events, setEvents] = useState<CaseEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!caseId) { setLoading(false); return; }
-    const { data } = await supabase
+    if (!caseId) { setEvents([]); setError(null); setLoading(false); return; }
+    setLoading(true);
+    setError(null);
+    const { data, error: queryError } = await supabase
       .from('case_events')
       .select('*')
       .eq('case_id', caseId)
       .order('event_date', { ascending: false });
-    setEvents((data || []) as CaseEvent[]);
+    if (queryError) setError(queryError.message);
+    else setEvents((data || []) as CaseEvent[]);
     setLoading(false);
   }, [caseId]);
 
   useEffect(() => { load(); }, [load]);
-  return { events, loading, reload: load };
+  return { events, loading, error, reload: load };
 }
 
 export function useHearings() {
   const [hearings, setHearings] = useState<Hearing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    setLoading(true);
+    setError(null);
+    const { data, error: queryError } = await supabase
       .from('hearings')
       .select('*')
       .order('hearing_date', { ascending: true });
-    setHearings((data || []) as Hearing[]);
+    if (queryError) setError(queryError.message);
+    else setHearings((data || []) as Hearing[]);
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  return { hearings, loading, reload: load };
+  return { hearings, loading, error, reload: load };
 }
 
 export function useDocuments() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase
+    setLoading(true);
+    setError(null);
+    const { data, error: queryError } = await supabase
       .from('documents')
       .select('*')
       .order('created_at', { ascending: false });
-    setDocuments((data || []) as DocumentRecord[]);
+    if (queryError) setError(queryError.message);
+    else setDocuments((data || []) as DocumentRecord[]);
     setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  return { documents, loading, reload: load };
+  return { documents, loading, error, reload: load };
 }
 
 export function useLegalReferences() {
   const [references, setReferences] = useState<LegalReference[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    supabase.from('legal_references').select('*').order('title')
-      .then(({ data }) => {
-        setReferences((data || []) as LegalReference[]);
-        setLoading(false);
-      });
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: queryError } = await supabase.from('legal_references').select('*').order('title');
+      if (queryError) setError(queryError.message);
+      else setReferences((data || []) as LegalReference[]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load legal references.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return { references, loading };
+  useEffect(() => { void load(); }, [load]);
+
+  return { references, loading, error, reload: load };
 }
 
 export function useLegalAidResources() {
-  const [resources, setResources] = useState<LegalAidResource[]>([]);
+  const [resources, setResources] = useState<LegalAidResource[]>(fallbackLegalAidResources);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    supabase.from('legal_aid_resources').select('*').order('authority_type')
-      .then(({ data }) => {
-        setResources((data || []) as LegalAidResource[]);
-        setLoading(false);
-      });
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: queryError } = await supabase.from('legal_aid_resources').select('*').order('authority_type');
+      if (queryError) {
+        setError(queryError.message);
+        setResources(fallbackLegalAidResources);
+        return;
+      }
+      const nextResources = ((data && data.length > 0 ? data : fallbackLegalAidResources) as LegalAidResource[]).map((resource) => ({
+        ...resource,
+        services: Array.isArray(resource.services) ? resource.services : [],
+        language: Array.isArray(resource.language) ? resource.language : ['en'],
+      }));
+      setResources(nextResources);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to load legal-aid resources.');
+      setResources(fallbackLegalAidResources);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return { resources, loading };
+  useEffect(() => { void load(); }, [load]);
+
+  return { resources, loading, error, reload: load };
 }
 
 export function useAgentTasks(caseId?: string) {

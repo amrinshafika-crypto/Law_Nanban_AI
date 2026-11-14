@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, Brain, FileText, GitBranch,
   BookOpen, Calendar, HeartHandshake, Bot, BarChart3, Settings,
@@ -15,6 +15,7 @@ const navItems = [
   { to: '/app/documents', label: 'Documents', icon: FileText },
   { to: '/app/timeline', label: 'Case Timeline', icon: GitBranch },
   { to: '/app/research', label: 'Legal Research', icon: BookOpen },
+  { to: '/app/library', label: 'Legal Library', icon: BookOpen },
   { to: '/app/calendar', label: 'Hearing Calendar', icon: Calendar },
   { to: '/app/legal-aid', label: 'Legal Aid Resources', icon: HeartHandshake },
   { to: '/app/assistant', label: 'AI Assistant', icon: Bot },
@@ -25,12 +26,17 @@ const navItems = [
 export function ProfessionalLayout({ children }: { children: ReactNode }) {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   async function handleSignOut() {
-    await signOut();
-    navigate('/signin');
+    setSignOutError(null);
+    const result = await signOut();
+    if (result.error) {
+      setSignOutError(result.error);
+      return;
+    }
+    navigate('/signin', { replace: true });
   }
 
   return (
@@ -80,6 +86,7 @@ export function ProfessionalLayout({ children }: { children: ReactNode }) {
             <LogOut size={18} />
             <span>Sign out</span>
           </button>
+          {signOutError && <p role="alert" className="px-3 pt-2 text-xs text-danger-300">{signOutError}</p>}
         </div>
       </aside>
 

@@ -114,6 +114,23 @@ export interface LegalReference {
   verified: boolean;
 }
 
+export interface LegalSection {
+  id: string;
+  legal_reference_id: string;
+  section_number: string;
+  section_title: string | null;
+  legal_text: string | null;
+  source_page_start: number | null;
+  source_page_end: number | null;
+  source_url: string | null;
+  consolidated_as_of: string | null;
+  extraction_status: string | null;
+  review_status: string | null;
+  verified: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface LegalAidResource {
   id: string;
   name: string;

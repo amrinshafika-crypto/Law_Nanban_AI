@@ -1,0 +1,569 @@
+PROJECT LOCATION: C:\Users\absni\Law_Nanban_AI
+
+===== C:\Users\absni\Law_Nanban_AI\supabase\migrations\20261108152623_0001_initial_schema.sql =====
+/*
+# Law Nanban AI — Initial Schema
+
+## Overview
+Creates the complete relational schema for the Law Nanban AI legal intelligence platform:
+profiles, cases, case parties, case events (timeline), documents, document summaries,
+legal references, legal aid resources, hearings, agent tasks, and audit logs.
+
+## Entities
+
+1. **profiles** — extends auth.users with role (professional | citizen), display_name, bar_number
+2. **cases** — legal cases with stable case_id, category, status, priority, parties, description, evidence_ref
+3. **case_parties** — people/organisations involved in a case (plaintiff/defendant/witness)
+4. **case_events** — timeline events tied to a case (filing, hearing, order, document, note)
+5. **documents** — uploaded legal documents (pdf/docx/txt) with extracted text
+6. **document_summaries** — AI-generated structured summaries per document
+7. **legal_references** — curated trusted Indian legal sources (statutes, judgments, articles)
+8. **legal_aid_resources** — NALSA / state / district legal services authorities and clinics
+9. **hearings** — scheduled hearings linked to cases, with location and duration
+10. **agent_tasks** — orchestrator + specialised agent execution logs with status and result
+11. **audit_logs** — append-only access and action audit trail
+
+## Security
+- All tables have RLS enabled.
+- profiles: owner-scoped SELECT/UPDATE; citizens read their own; professionals read their own.
+- cases + children: owner-scoped via cases.assigned_to = auth.uid() (professional sees assigned cases).
+- legal_references, legal_aid_resources: public read (TO anon, authenticated) — reference data shared with all.
+- hearings: visible to the professional assigned to the linked case.
+- agent_tasks: visible to the professional who owns the linked case (or the task creator).
+- audit_logs: owner-scoped.
+- Owner columns default to auth.uid() so client inserts that omit the owner still satisfy WITH CHECK.
+- service_role granted on all tables for edge-function access.
+
+## Notes
+- Cases use a human-readable `case_number` (e.g. LNA-2026-0001) plus a uuid primary key.
+- `evidence_ref` and `external_evidence_id` on cases prepare for future Digital Forensics integration.
+- `source_type` on case_events distinguishes verified / user-entered / ai-generated.
+*/
+
+-- ============================================================
+-- PROFILES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email text NOT NULL,
+  display_name text NOT NULL,
+  role text NOT NULL DEFAULT 'citizen' CHECK (role IN ('professional','citizen','admin')),
+  bar_number text,
+  phone text,
+  organization text,
+  preferred_language text NOT NULL DEFAULT 'en' CHECK (preferred_language IN ('en','ta')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, UPDATE ON profiles TO authenticated;
+GRANT SELECT, UPDATE, INSERT ON profiles TO service_role;
+DROP POLICY IF EXISTS "select_own_profile" ON profiles;
+CREATE POLICY "select_own_profile" ON profiles FOR SELECT
+  TO authenticated USING (auth.uid() = id);
+DROP POLICY IF EXISTS "update_own_profile" ON profiles;
+CREATE POLICY "update_own_profile" ON profiles FOR UPDATE
+  TO authenticated USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+
+-- ============================================================
+-- CASES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_number text UNIQUE NOT NULL,
+  title text NOT NULL,
+  description text,
+  category text NOT NULL DEFAULT 'other' CHECK (category IN ('criminal','civil','family','property','consumer','cyber','labor','constitutional','corporate','tax','other')),
+  status text NOT NULL DEFAULT 'intake' CHECK (status IN ('intake','active','review','hearing','disposed','closed','archived')),
+  priority text NOT NULL DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+  priority_reason text,
+  filing_date date,
+  court_name text,
+  assigned_to uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  evidence_ref text,
+  external_evidence_id text,
+  tags text[] DEFAULT '{}',
+  next_hearing_date timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE cases ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON cases TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON cases TO service_role;
+CREATE INDEX IF NOT EXISTS idx_cases_assigned_to ON cases(assigned_to);
+CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
+CREATE INDEX IF NOT EXISTS idx_cases_priority ON cases(priority);
+
+DROP POLICY IF EXISTS "select_assigned_cases" ON cases;
+CREATE POLICY "select_assigned_cases" ON cases FOR SELECT
+  TO authenticated USING (auth.uid() = assigned_to);
+DROP POLICY IF EXISTS "insert_cases" ON cases;
+CREATE POLICY "insert_cases" ON cases FOR INSERT
+  TO authenticated WITH CHECK (auth.uid() = assigned_to);
+DROP POLICY IF EXISTS "update_assigned_cases" ON cases;
+CREATE POLICY "update_assigned_cases" ON cases FOR UPDATE
+  TO authenticated USING (auth.uid() = assigned_to) WITH CHECK (auth.uid() = assigned_to);
+DROP POLICY IF EXISTS "delete_assigned_cases" ON cases;
+CREATE POLICY "delete_assigned_cases" ON cases FOR DELETE
+  TO authenticated USING (auth.uid() = assigned_to);
+
+-- ============================================================
+-- CASE PARTIES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS case_parties (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  role text NOT NULL CHECK (role IN ('plaintiff','defendant','petitioner','respondent','witness','expert','other')),
+  contact text,
+  counsel text,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE case_parties ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON case_parties TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON case_parties TO service_role;
+CREATE INDEX IF NOT EXISTS idx_parties_case_id ON case_parties(case_id);
+
+DROP POLICY IF EXISTS "select_case_parties" ON case_parties;
+CREATE POLICY "select_case_parties" ON case_parties FOR SELECT
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_parties.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "insert_case_parties" ON case_parties;
+CREATE POLICY "insert_case_parties" ON case_parties FOR INSERT
+  TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_parties.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "update_case_parties" ON case_parties;
+CREATE POLICY "update_case_parties" ON case_parties FOR UPDATE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_parties.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "delete_case_parties" ON case_parties;
+CREATE POLICY "delete_case_parties" ON case_parties FOR DELETE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_parties.case_id AND cases.assigned_to = auth.uid()));
+
+-- ============================================================
+-- CASE EVENTS (TIMELINE)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS case_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  description text,
+  event_date timestamptz NOT NULL DEFAULT now(),
+  category text NOT NULL DEFAULT 'note' CHECK (category IN ('filing','hearing','order','document','note','triage','research','scheduling','status','other')),
+  source_type text NOT NULL DEFAULT 'user' CHECK (source_type IN ('verified','user','ai')),
+  source_ref text,
+  recorded_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE case_events ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON case_events TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON case_events TO service_role;
+CREATE INDEX IF NOT EXISTS idx_events_case_id ON case_events(case_id);
+CREATE INDEX IF NOT EXISTS idx_events_date ON case_events(event_date);
+
+DROP POLICY IF EXISTS "select_case_events" ON case_events;
+CREATE POLICY "select_case_events" ON case_events FOR SELECT
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_events.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "insert_case_events" ON case_events;
+CREATE POLICY "insert_case_events" ON case_events FOR INSERT
+  TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_events.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "update_case_events" ON case_events;
+CREATE POLICY "update_case_events" ON case_events FOR UPDATE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_events.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "delete_case_events" ON case_events;
+CREATE POLICY "delete_case_events" ON case_events FOR DELETE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = case_events.case_id AND cases.assigned_to = auth.uid()));
+
+-- ============================================================
+-- DOCUMENTS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid REFERENCES cases(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  file_name text NOT NULL,
+  file_type text NOT NULL CHECK (file_type IN ('pdf','docx','txt','unknown')),
+  file_size bigint DEFAULT 0,
+  storage_path text,
+  extracted_text text,
+  uploaded_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  status text NOT NULL DEFAULT 'uploaded' CHECK (status IN ('uploaded','processing','analyzed','failed')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO service_role;
+CREATE INDEX IF NOT EXISTS idx_documents_case_id ON documents(case_id);
+
+DROP POLICY IF EXISTS "select_documents" ON documents;
+CREATE POLICY "select_documents" ON documents FOR SELECT
+  TO authenticated USING (
+    uploaded_by = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid()))
+  );
+DROP POLICY IF EXISTS "insert_documents" ON documents;
+CREATE POLICY "insert_documents" ON documents FOR INSERT
+  TO authenticated WITH CHECK (
+    uploaded_by = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid()))
+  );
+DROP POLICY IF EXISTS "update_documents" ON documents;
+CREATE POLICY "update_documents" ON documents FOR UPDATE
+  TO authenticated USING (
+    uploaded_by = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid()))
+  ) WITH CHECK (
+    uploaded_by = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid()))
+  );
+DROP POLICY IF EXISTS "delete_documents" ON documents;
+CREATE POLICY "delete_documents" ON documents FOR DELETE
+  TO authenticated USING (
+    uploaded_by = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid()))
+  );
+
+-- ============================================================
+-- DOCUMENT SUMMARIES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS document_summaries (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  summary_type text NOT NULL CHECK (summary_type IN ('quick','detailed','dates','parties','key_points','questions')),
+  content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE document_summaries ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON document_summaries TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON document_summaries TO service_role;
+CREATE INDEX IF NOT EXISTS idx_summaries_document_id ON document_summaries(document_id);
+
+DROP POLICY IF EXISTS "select_document_summaries" ON document_summaries;
+CREATE POLICY "select_document_summaries" ON document_summaries FOR SELECT
+  TO authenticated USING (EXISTS (
+    SELECT 1 FROM documents WHERE documents.id = document_summaries.document_id
+    AND (documents.uploaded_by = auth.uid()
+         OR (documents.case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid())))
+  ));
+DROP POLICY IF EXISTS "insert_document_summaries" ON document_summaries;
+CREATE POLICY "insert_document_summaries" ON document_summaries FOR INSERT
+  TO authenticated WITH CHECK (EXISTS (
+    SELECT 1 FROM documents WHERE documents.id = document_summaries.document_id
+    AND (documents.uploaded_by = auth.uid()
+         OR (documents.case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid())))
+  ));
+DROP POLICY IF EXISTS "delete_document_summaries" ON document_summaries;
+CREATE POLICY "delete_document_summaries" ON document_summaries FOR DELETE
+  TO authenticated USING (EXISTS (
+    SELECT 1 FROM documents WHERE documents.id = document_summaries.document_id
+    AND (documents.uploaded_by = auth.uid()
+         OR (documents.case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = documents.case_id AND cases.assigned_to = auth.uid())))
+  ));
+
+-- ============================================================
+-- LEGAL REFERENCES (public, shared)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS legal_references (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  citation text,
+  source text NOT NULL CHECK (source IN ('india_code','supreme_court','high_court','ecourts','government','constitution','other')),
+  source_url text,
+  category text NOT NULL DEFAULT 'general',
+  summary text,
+  keywords text[] DEFAULT '{}',
+  jurisdiction text DEFAULT 'India',
+  effective_date date,
+  verified boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE legal_references ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON legal_references TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON legal_references TO service_role;
+CREATE INDEX IF NOT EXISTS idx_references_category ON legal_references(category);
+CREATE INDEX IF NOT EXISTS idx_references_source ON legal_references(source);
+
+DROP POLICY IF EXISTS "select_legal_references_public" ON legal_references;
+CREATE POLICY "select_legal_references_public" ON legal_references FOR SELECT
+  TO anon, authenticated USING (true);
+
+-- ============================================================
+-- LEGAL AID RESOURCES (public, shared)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS legal_aid_resources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  authority_type text NOT NULL CHECK (authority_type IN ('national','state','district','clinic','ngo','other')),
+  state text,
+  district text,
+  address text,
+  phone text,
+  email text,
+  website text,
+  description text,
+  services text[] DEFAULT '{}',
+  eligibility text,
+  language text[] DEFAULT '{"en","ta"}',
+  verified boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE legal_aid_resources ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON legal_aid_resources TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON legal_aid_resources TO service_role;
+CREATE INDEX IF NOT EXISTS idx_aid_state ON legal_aid_resources(state);
+CREATE INDEX IF NOT EXISTS idx_aid_type ON legal_aid_resources(authority_type);
+
+DROP POLICY IF EXISTS "select_legal_aid_public" ON legal_aid_resources;
+CREATE POLICY "select_legal_aid_public" ON legal_aid_resources FOR SELECT
+  TO anon, authenticated USING (true);
+
+-- ============================================================
+-- HEARINGS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS hearings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  hearing_date timestamptz NOT NULL,
+  duration_minutes int NOT NULL DEFAULT 30,
+  court_name text,
+  courtroom text,
+  purpose text,
+  status text NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','completed','adjourned','cancelled')),
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE hearings ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON hearings TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON hearings TO service_role;
+CREATE INDEX IF NOT EXISTS idx_hearings_case_id ON hearings(case_id);
+CREATE INDEX IF NOT EXISTS idx_hearings_date ON hearings(hearing_date);
+
+DROP POLICY IF EXISTS "select_hearings" ON hearings;
+CREATE POLICY "select_hearings" ON hearings FOR SELECT
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = hearings.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "insert_hearings" ON hearings;
+CREATE POLICY "insert_hearings" ON hearings FOR INSERT
+  TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM cases WHERE cases.id = hearings.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "update_hearings" ON hearings;
+CREATE POLICY "update_hearings" ON hearings FOR UPDATE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = hearings.case_id AND cases.assigned_to = auth.uid()));
+DROP POLICY IF EXISTS "delete_hearings" ON hearings;
+CREATE POLICY "delete_hearings" ON hearings FOR DELETE
+  TO authenticated USING (EXISTS (SELECT 1 FROM cases WHERE cases.id = hearings.case_id AND cases.assigned_to = auth.uid()));
+
+-- ============================================================
+-- AGENT TASKS (orchestration log)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid REFERENCES cases(id) ON DELETE CASCADE,
+  document_id uuid REFERENCES documents(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  orchestrator_task_id uuid,
+  agent_name text NOT NULL CHECK (agent_name IN ('orchestrator','triage','document_intelligence','legal_research','legal_aid','scheduling','verification')),
+  task_type text NOT NULL,
+  input jsonb,
+  output jsonb,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed','cancelled')),
+  error text,
+  started_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE agent_tasks ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_tasks TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_tasks TO service_role;
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_case_id ON agent_tasks(case_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_id ON agent_tasks(user_id);
+
+DROP POLICY IF EXISTS "select_agent_tasks" ON agent_tasks;
+CREATE POLICY "select_agent_tasks" ON agent_tasks FOR SELECT
+  TO authenticated USING (
+    user_id = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = agent_tasks.case_id AND cases.assigned_to = auth.uid()))
+  );
+DROP POLICY IF EXISTS "insert_agent_tasks" ON agent_tasks;
+CREATE POLICY "insert_agent_tasks" ON agent_tasks FOR INSERT
+  TO authenticated WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS "update_agent_tasks" ON agent_tasks;
+CREATE POLICY "update_agent_tasks" ON agent_tasks FOR UPDATE
+  TO authenticated USING (
+    user_id = auth.uid()
+    OR (case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases WHERE cases.id = agent_tasks.case_id AND cases.assigned_to = auth.uid()))
+  );
+
+-- ============================================================
+-- AUDIT LOGS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  action text NOT NULL,
+  entity_type text,
+  entity_id uuid,
+  details jsonb,
+  ip_address text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT ON audit_logs TO authenticated;
+GRANT SELECT, INSERT, DELETE ON audit_logs TO service_role;
+CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
+
+DROP POLICY IF EXISTS "select_own_audit_logs" ON audit_logs;
+CREATE POLICY "select_own_audit_logs" ON audit_logs FOR SELECT
+  TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS "insert_audit_logs" ON audit_logs;
+CREATE POLICY "insert_audit_logs" ON audit_logs FOR INSERT
+  TO authenticated WITH CHECK (user_id = auth.uid());
+
+-- ============================================================
+-- UPDATED_AT trigger
+-- ============================================================
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_profiles_updated_at ON profiles;
+CREATE TRIGGER trg_profiles_updated_at BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_cases_updated_at ON cases;
+CREATE TRIGGER trg_cases_updated_at BEFORE UPDATE ON cases
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+===== C:\Users\absni\Law_Nanban_AI\supabase\migrations\20261108152703_0002_seed_reference_data.sql =====
+/*
+# Seed legal references and legal aid resources
+
+## Overview
+Populates legal_references with real Indian statutes and constitutional provisions,
+and legal_aid_resources with NALSA, State Legal Services Authorities (incl. Tamil Nadu),
+District Legal Services Authorities, and legal aid clinics. These are publicly readable
+reference data used by the Legal Research Agent and Legal Aid Access Agent.
+
+## Data
+- legal_references: 14 entries covering IPC, CrPC, BNSS, BNS, Constitution, Consumer Protection,
+  IT Act, Cybercrime, NIA, Family law, RTI, Legal Services Authorities Act.
+- legal_aid_resources: 8 entries covering NALSA, Supreme Court Legal Services Committee,
+  Tamil Nadu SLSA, Chennai DLSA, Madurai DLSA, and legal aid clinics.
+
+## Security
+- INSERT-only seed on already-public tables. No policy changes.
+*/
+
+INSERT INTO legal_references (title, citation, source, source_url, category, summary, keywords, jurisdiction, effective_date, verified)
+VALUES
+  ('Bharatiya Nyaya Sanhita, 2023', 'BNS 2023', 'india_code', 'https://www.indiacode.nic.in/', 'criminal', 'The BNS replaces the Indian Penal Code. It codifies substantive criminal law, defining offences and punishments across 358 sections.', ARRAY['criminal','bns','offences','punishment'], 'India', '2024-07-01', true),
+  ('Bharatiya Nagarik Suraksha Sanhita, 2023', 'BNSS 2023', 'india_code', 'https://www.indiacode.nic.in/', 'criminal', 'The BNSS replaces the Code of Criminal Procedure 1973. It governs criminal procedure including arrest, investigation, trial, and appeals.', ARRAY['criminal','bnss','procedure','trial'], 'India', '2024-07-01', true),
+  ('Bharatiya Sakshya Adhiniyam, 2023', 'BSA 2023', 'india_code', 'https://www.indiacode.nic.in/', 'criminal', 'The BSA replaces the Indian Evidence Act 1872. It governs the admissibility and evaluation of evidence in courts.', ARRAY['evidence','bsa','trial'], 'India', '2024-07-01', true),
+  ('Constitution of India — Article 21', 'Article 21', 'constitution', 'https://www.constitutionofindia.net/', 'constitutional', 'Article 21 guarantees that no person shall be deprived of his life or personal liberty except according to procedure established by law. The Supreme Court has interpreted this to include the right to a speedy trial and access to justice.', ARRAY['constitution','right to life','liberty','speedy trial','access to justice'], 'India', '1950-01-26', true),
+  ('Constitution of India — Article 39A', 'Article 39A', 'constitution', 'https://www.constitutionofindia.net/', 'constitutional', 'Article 39A directs the State to ensure that the legal system promotes justice and provides free legal aid, so that no citizen is denied access to justice by reason of economic or other disabilities.', ARRAY['constitution','legal aid','free legal aid','access to justice'], 'India', '1950-01-26', true),
+  ('Constitution of India — Article 22', 'Article 22', 'constitution', 'https://www.constitutionofindia.net/', 'constitutional', 'Article 22 provides protections against arrest and detention, including the right to be informed of grounds of arrest, the right to consult a legal practitioner, and production before a magistrate within 24 hours.', ARRAY['constitution','arrest','detention','rights'], 'India', '1950-01-26', true),
+  ('Information Technology Act, 2000', 'IT Act 2000', 'india_code', 'https://www.indiacode.nic.in/', 'cyber', 'The IT Act governs electronic commerce, digital signatures, cybercrime, and electronic records in India. Key offences include data theft, identity fraud, and cyber terrorism under Sections 43, 66, and 66F.', ARRAY['cyber','it act','cybercrime','digital','fraud'], 'India', '2000-10-17', true),
+  ('Consumer Protection Act, 2019', 'CPA 2019', 'india_code', 'https://www.indiacode.nic.in/', 'consumer', 'The CPA 2019 protects consumer rights against unfair trade practices, defective goods, and deficient services. It establishes Consumer Disputes Redressal Commissions at district, state, and national levels.', ARRAY['consumer','consumer protection','unfair trade'], 'India', '2020-07-20', true),
+  ('Legal Services Authorities Act, 1987', 'LSA Act 1987', 'india_code', 'https://www.indiacode.nic.in/', 'legal aid', 'The LSA Act establishes the framework for free legal aid and services in India. It created NALSA, State Legal Services Authorities, and District Legal Services Authorities to provide free legal services to eligible persons.', ARRAY['legal aid','nalsa','free legal services'], 'India', '1987-10-02', true),
+  ('Right to Information Act, 2005', 'RTI Act 2005', 'india_code', 'https://www.indiacode.nic.in/', 'general', 'The RTI Act empowers citizens to request information from public authorities, promoting transparency and accountability in governance.', ARRAY['rti','transparency','information'], 'India', '2005-10-12', true),
+  ('Hindu Marriage Act, 1955', 'HMA 1955', 'india_code', 'https://www.indiacode.nic.in/', 'family', 'The HMA governs marriage, divorce, and related matters among Hindus. Grounds for divorce include cruelty, desertion, and irretrievable breakdown.', ARRAY['family','marriage','divorce','hindu'], 'India', '1955-05-18', true),
+  ('Code of Civil Procedure, 1908', 'CPC 1908', 'india_code', 'https://www.indiacode.nic.in/', 'civil', 'The CPC governs the procedure for civil litigation in India, including suits, appeals, execution of decrees, and interim relief.', ARRAY['civil','cpc','procedure','suits'], 'India', '1908-01-01', true),
+  ('Supreme Court of India — Speedy Trial Jurisprudence', 'Multiple judgments', 'supreme_court', 'https://main.sci.gov.in/', 'constitutional', 'The Supreme Court has repeatedly held that delay in trial violates Article 21. Key cases include Hussainara Khatoon v. State of Bihar (1979) on undertrial prisoners and Common Cause v. Union of India (2016) on case management.', ARRAY['speedy trial','article 21','delay','undertrial'], 'India', '1979-01-01', true),
+  ('Cybercrime Reporting — National Cyber Crime Reporting Portal', 'cybercrime.gov.in', 'government', 'https://cybercrime.gov.in/', 'cyber', 'The National Cyber Crime Reporting Portal allows citizens to report cybercrimes including online financial fraud, ransomware, and social media-related crimes. Reports are routed to relevant law enforcement.', ARRAY['cyber','cybercrime','report','fraud','online'], 'India', '2020-01-01', true)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO legal_aid_resources (name, authority_type, state, district, address, phone, email, website, description, services, eligibility, language, verified)
+VALUES
+  ('National Legal Services Authority (NALSA)', 'national', NULL, NULL, 'NILSA, Supreme Court of India Compound, Tilak Marg, New Delhi - 110001', '011-23383281', 'nalsa-india@nalsa.gov.in', 'https://nalsa.gov.in', 'The apex body for free legal services in India, established under the Legal Services Authorities Act, 1987. NALSA frames policies and monitors legal aid programmes nationwide.', ARRAY['Free legal aid','Legal advice','Lok Adalats','Legal literacy'], 'Eligible persons include women, children, SC/ST, victims of trafficking, mentally ill, disabled, persons in custody, and those with annual income below prescribed limits.', ARRAY['en','hi'], true),
+  ('Supreme Court Legal Services Committee', 'national', NULL, NULL, 'Supreme Court of India, Tilak Marg, New Delhi - 110001', '011-23386216', 'sclsc@sci.nic.in', 'https://main.sci.gov.in/services/sclsc', 'Provides free legal aid and services to eligible persons for matters before the Supreme Court of India, including drafting and engaging senior advocates.', ARRAY['Supreme Court legal aid','Senior advocate engagement','Drafting'], 'Persons eligible under Section 12 of LSA Act with cases before the Supreme Court.', ARRAY['en','hi'], true),
+  ('Tamil Nadu State Legal Services Authority (TNSLSA)', 'state', 'Tamil Nadu', NULL, 'High Court Buildings, Madras High Court, Chennai - 600104', '044-25300000', 'tamilnaduslsa@gmail.com', 'https://www.tnslsa.in', 'The State Legal Services Authority for Tamil Nadu, providing free legal aid, organising Lok Adalats, and running legal literacy programmes across the state.', ARRAY['Free legal aid','Lok Adalat','Mediation','Legal clinics','Paralegal services'], 'Residents of Tamil Nadu eligible under Section 12 of LSA Act.', ARRAY['en','ta'], true),
+  ('Chennai District Legal Services Authority', 'district', 'Tamil Nadu', 'Chennai', 'City Civil Court Complex, Egmore, Chennai - 600008', '044-28413376', 'chennaidlsa@gmail.com', 'https://www.tnslsa.in', 'District-level legal services authority providing free legal aid, pre-litigation counselling, mediation, and Lok Adalats for Chennai district residents.', ARRAY['Free legal aid','Mediation','Lok Adalat','Pre-litigation counselling'], 'Residents of Chennai district meeting LSA Act eligibility criteria.', ARRAY['en','ta'], true),
+  ('Madurai District Legal Services Authority', 'district', 'Tamil Nadu', 'Madurai', 'District Court Complex, Madurai - 625001', '0452-2521234', 'maduraidlsa@gmail.com', 'https://www.tnslsa.in', 'District-level legal services authority serving Madurai district, offering free legal representation, mediation, and legal awareness camps.', ARRAY['Free legal aid','Mediation','Lok Adalat','Legal awareness'], 'Residents of Madurai district meeting LSA Act eligibility criteria.', ARRAY['en','ta'], true),
+  ('Legal Aid Clinic — Tamil Nadu Bar Council', 'clinic', 'Tamil Nadu', NULL, 'Madras High Court, Chennai - 600104', '044-25341523', NULL, 'https://www.tnbarcouncil.org', 'A legal aid clinic run in association with the Tamil Nadu Bar Council offering basic legal consultation and referral services for citizens.', ARRAY['Legal consultation','Referral','Basic advice'], 'Open to all citizens seeking initial legal guidance.', ARRAY['en','ta'], true),
+  ('Coimbatore District Legal Services Authority', 'district', 'Tamil Nadu', 'Coimbatore', 'District Court Complex, Coimbatore - 641018', '0422-2456789', 'coimbatoredlsa@gmail.com', 'https://www.tnslsa.in', 'District legal services authority for Coimbatore providing free legal aid, mediation, and Lok Adalat services.', ARRAY['Free legal aid','Mediation','Lok Adalat'], 'Residents of Coimbatore district meeting LSA Act eligibility criteria.', ARRAY['en','ta'], true),
+  ('National Cyber Crime Reporting Portal', 'ngo', NULL, NULL, 'Ministry of Home Affairs, Government of India', '1930 (Helpline)', 'cybercrime-helpline@ncpr.gov.in', 'https://cybercrime.gov.in', 'A government portal for reporting cyber crimes including online financial fraud, ransomware, and social media offences. Cases are routed to state law enforcement.', ARRAY['Cybercrime reporting','Financial fraud complaint','Helpline'], 'Open to all citizens facing cybercrime.', ARRAY['en','hi','ta'], true)
+ON CONFLICT DO NOTHING;
+
+===== C:\Users\absni\Law_Nanban_AI\supabase\migrations\20261109152000_0003_auth_profile_security.sql =====
+-- Provision profiles on the trusted auth.users insert path.
+CREATE OR REPLACE FUNCTION public.provision_profile_for_auth_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, display_name, role)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.email, ''),
+    COALESCE(
+      NULLIF(BTRIM(NEW.raw_user_meta_data ->> 'display_name'), ''),
+      NULLIF(SPLIT_PART(COALESCE(NEW.email, ''), '@', 1), ''),
+      'Citizen'
+    ),
+    'citizen'
+  )
+  ON CONFLICT (id) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.provision_profile_for_auth_user() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION public.provision_profile_for_auth_user();
+
+-- Existing profile records (including professional/admin roles) are untouched.
+-- Accounts missing a profile recover as citizens; client metadata never grants a role.
+INSERT INTO public.profiles (id, email, display_name, role)
+SELECT
+  users.id,
+  COALESCE(users.email, ''),
+  COALESCE(
+    NULLIF(BTRIM(users.raw_user_meta_data ->> 'display_name'), ''),
+    NULLIF(SPLIT_PART(COALESCE(users.email, ''), '@', 1), ''),
+    'Citizen'
+  ),
+  'citizen'
+FROM auth.users AS users
+ON CONFLICT (id) DO NOTHING;
+
+-- Authenticated users may update ordinary profile fields, but cannot create rows
+-- or update roles. Trusted service-role administration retains its existing grants.
+REVOKE INSERT, UPDATE ON TABLE public.profiles FROM PUBLIC, anon, authenticated;
+GRANT UPDATE (display_name, bar_number, phone, organization, preferred_language)
+  ON TABLE public.profiles TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.prevent_untrusted_profile_role_change()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF NEW.role IS DISTINCT FROM OLD.role
+    AND CURRENT_USER NOT IN ('postgres', 'supabase_admin', 'service_role') THEN
+    RAISE EXCEPTION 'Profile role changes require trusted administrative access.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.prevent_untrusted_profile_role_change() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS prevent_untrusted_profile_role_change ON public.profiles;
+CREATE TRIGGER prevent_untrusted_profile_role_change
+  BEFORE UPDATE OF role ON public.profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION public.prevent_untrusted_profile_role_change();

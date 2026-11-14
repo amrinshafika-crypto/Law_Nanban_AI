@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { LandingPage } from '@/pages/LandingPage';
 import { AuthPage } from '@/pages/auth/AuthPage';
@@ -23,14 +23,52 @@ import { CitizenExplain } from '@/pages/citizen/CitizenExplain';
 import { CitizenAid } from '@/pages/citizen/CitizenAid';
 import { CitizenCaseStatus } from '@/pages/citizen/CitizenCaseStatus';
 import { CitizenLanguage } from '@/pages/citizen/CitizenLanguage';
-import { useState, ReactNode } from 'react';
+import { LegalLibrary } from '@/pages/citizen/LegalLibrary';
+import { LegalLibraryDetail } from '@/pages/citizen/LegalLibraryDetail';
+import { useEffect, useState, ReactNode } from 'react';
+import { isLang } from '@/i18n';
 import type { Lang } from '@/i18n';
 
-function RequireAuth({ children, role }: { children: ReactNode; role: 'professional' | 'citizen' }) {
-  const { user, profile, loading } = useAuth();
+function RequireAuth({ children, role, allowGuest = false }: { children: ReactNode; role: 'professional' | 'citizen'; allowGuest?: boolean }) {
+  const { user, profile, profileError, loading, refreshProfile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-2 border-navy-200 border-t-navy-600" /></div>;
-  if (!user) return <Navigate to="/signin" replace />;
-  if (profile && profile.role !== role && profile.role !== 'admin') {
+  if (!user) return allowGuest ? <>{children}</> : <Navigate to="/signin" replace />;
+  if (profileError || !profile || profile.id !== user.id) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="max-w-md rounded-xl border border-danger-200 bg-white p-6 text-center shadow-card">
+          <h1 className="font-serif text-xl font-semibold text-navy-900">Account profile unavailable</h1>
+          <p role="alert" className="mt-3 text-sm text-danger-700">
+            {profileError || 'A valid profile for this signed-in account could not be found. Access is blocked.'}
+          </p>
+          <div className="mt-5 flex justify-center gap-3">
+            <button type="button" className="btn-outline" onClick={() => void refreshProfile()}>Retry</button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={async () => {
+                const result = await signOut();
+                if (result.error) {
+                  setSignOutError(result.error);
+                } else {
+                  navigate('/signin', { replace: true });
+                }
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+          {signOutError && <p role="alert" className="mt-3 text-sm text-danger-700">{signOutError}</p>}
+        </div>
+      </div>
+    );
+  }
+  if (!['citizen', 'professional', 'admin'].includes(profile.role)) {
+    return <Navigate to="/signin" replace />;
+  }
+  if (profile.role !== role && profile.role !== 'admin') {
     return <Navigate to={profile.role === 'professional' ? '/app' : '/portal'} replace />;
   }
   return <>{children}</>;
@@ -50,9 +88,11 @@ function ProfessionalRoutes() {
           <Route path="research" element={<LegalResearch />} />
           <Route path="calendar" element={<HearingCalendar />} />
           <Route path="legal-aid" element={<LegalAidResources />} />
+          <Route path="library" element={<LegalLibrary />} />
           <Route path="assistant" element={<AIAssistant />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/app" replace />} />
         </Routes>
       </ProfessionalLayout>
     </RequireAuth>
@@ -60,19 +100,46 @@ function ProfessionalRoutes() {
 }
 
 function CitizenRoutes() {
-  const [lang, setLang] = useState<Lang>(() => (localStorage.getItem('ln-lang') as Lang) || 'en');
+  const [lang, setLang] = useState<Lang>(() => {
+    try {
+      const saved = localStorage.getItem('ln-lang');
+      return isLang(saved) ? saved : 'en';
+    } catch {
+      return 'en';
+    }
+  });
+
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === 'ln-lang' && isLang(event.newValue)) setLang(event.newValue);
+    }
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  function updateLang(nextLang: Lang) {
+    if (!isLang(nextLang)) return;
+    setLang(nextLang);
+    try { localStorage.setItem('ln-lang', nextLang); } catch { /* Keep the in-memory preference for this visit. */ }
+  }
+
   return (
-    <CitizenLayout lang={lang} setLang={(l) => { setLang(l); localStorage.setItem('ln-lang', l); }}>
-      <Routes>
-        <Route index element={<CitizenHome lang={lang} />} />
-        <Route path="ask" element={<CitizenAsk lang={lang} />} />
-        <Route path="rights" element={<CitizenRights lang={lang} />} />
-        <Route path="explain" element={<CitizenExplain lang={lang} />} />
-        <Route path="aid" element={<CitizenAid lang={lang} />} />
-        <Route path="case-status" element={<CitizenCaseStatus lang={lang} />} />
-        <Route path="language" element={<CitizenLanguage lang={lang} setLang={setLang} />} />
-      </Routes>
-    </CitizenLayout>
+    <RequireAuth role="citizen" allowGuest>
+      <CitizenLayout lang={lang} setLang={updateLang}>
+        <Routes>
+          <Route index element={<CitizenHome lang={lang} />} />
+          <Route path="ask" element={<CitizenAsk lang={lang} />} />
+          <Route path="rights" element={<CitizenRights lang={lang} />} />
+          <Route path="legal-library" element={<LegalLibrary />} />
+          <Route path="legal-library/:slug" element={<LegalLibraryDetail />} />
+          <Route path="explain" element={<CitizenExplain lang={lang} />} />
+          <Route path="aid" element={<CitizenAid lang={lang} />} />
+          <Route path="case-status" element={<CitizenCaseStatus lang={lang} />} />
+          <Route path="language" element={<CitizenLanguage lang={lang} setLang={setLang} />} />
+          <Route path="*" element={<Navigate to="/portal" replace />} />
+        </Routes>
+      </CitizenLayout>
+    </RequireAuth>
   );
 }
 

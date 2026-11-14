@@ -1,0 +1,16 @@
+{
+  "state_act_records_discovered": 2,
+  "central_act_records_discovered": 6,
+  "pdfs_downloaded": 5,
+  "pdfs_successfully_extracted": 5,
+  "sections_extracted": 52,
+  "records_needing_review": 8,
+  "official_source_notes": [
+    "India Code: https://indiacode.gov.in/",
+    "Tamil Nadu Government Gazette: https://stationeryprinting.tn.gov.in/gazette.php"
+  ],
+  "official_source_urls_confirmed": 0,
+  "official_source_urls_pending": 8,
+  "discovery_urls_only": 8,
+  "official_source_note": "No Act-specific official source pages were confirmed. Generic discovery pages remain recorded separately from pending Act-specific URLs."
+}

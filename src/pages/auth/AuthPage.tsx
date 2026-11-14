@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Scale, Mail, Lock, ArrowRight, AlertCircle, Briefcase, Users } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Logo } from '@/components/Logo';
-import type { UserRole } from '@/types';
 
 export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
   const { signIn, signUp } = useAuth();
@@ -13,30 +12,41 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [role, setRole] = useState<UserRole>('professional');
-  const [barNumber, setBarNumber] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (loading) return;
     setError(null);
+    setMessage(null);
     setLoading(true);
 
-    if (isSignUp) {
-      const { error } = await signUp(email, password, displayName, role);
-      if (error) {
-        setError(error);
-        setLoading(false);
-        return;
+    try {
+      if (isSignUp) {
+        const result = await signUp(email, password, displayName);
+        if (result.error) {
+          setError(result.error);
+        } else if (result.confirmationRequired) {
+          setMessage('If registration was accepted, a confirmation email will be sent. Confirm your address before signing in. If this email is already registered, try signing in.');
+        } else {
+          navigate('/portal', { replace: true });
+        }
+      } else {
+        const result = await signIn(email, password);
+        if (result.error) {
+          setError(result.error);
+        } else if (result.role) {
+          navigate(result.role === 'citizen' ? '/portal' : '/app', { replace: true });
+        } else {
+          setError('Sign in succeeded but no valid account role was returned. Please try again or contact support.');
+        }
       }
-      navigate(role === 'professional' ? '/app' : '/portal');
-    } else {
-      const { error } = await signIn(email, password);
-      if (error) {
-        setError(error);
-        setLoading(false);
-      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Authentication failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -85,29 +95,25 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
             {isSignUp ? 'Create your account' : 'Welcome back'}
           </h1>
           <p className="text-sm text-navy-500 mt-1.5 mb-6">
-            {isSignUp ? 'Choose your role to get started.' : 'Sign in to access your workspace.'}
+            {isSignUp ? 'New accounts are citizens. Professional access requires administrator approval.' : 'Sign in to access your workspace.'}
           </p>
 
           {isSignUp && (
             <div className="grid grid-cols-2 gap-3 mb-5">
-              <button
-                type="button"
-                onClick={() => setRole('professional')}
-                className={`p-4 rounded-lg border-2 text-left transition-all ${role === 'professional' ? 'border-accent-500 bg-accent-50' : 'border-navy-200 bg-white hover:border-navy-300'}`}
+              <div
+                className="p-4 rounded-lg border-2 border-navy-200 bg-navy-50 text-left opacity-70 cursor-not-allowed"
               >
-                <Briefcase size={20} className={role === 'professional' ? 'text-accent-600' : 'text-navy-400'} />
+                <Briefcase size={20} className="text-navy-400" />
                 <p className="text-sm font-semibold text-navy-800 mt-2">Legal Professional</p>
-                <p className="text-xs text-navy-500 mt-0.5">Lawyers & court personnel</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setRole('citizen')}
-                className={`p-4 rounded-lg border-2 text-left transition-all ${role === 'citizen' ? 'border-accent-500 bg-accent-50' : 'border-navy-200 bg-white hover:border-navy-300'}`}
+                <p className="text-xs text-navy-500 mt-0.5">Access granted by an administrator</p>
+              </div>
+              <div
+                className="p-4 rounded-lg border-2 border-accent-500 bg-accent-50 text-left"
               >
-                <Users size={20} className={role === 'citizen' ? 'text-accent-600' : 'text-navy-400'} />
+                <Users size={20} className="text-accent-600" />
                 <p className="text-sm font-semibold text-navy-800 mt-2">Citizen</p>
                 <p className="text-xs text-navy-500 mt-0.5">Legal info & assistance</p>
-              </button>
+              </div>
             </div>
           )}
 
@@ -122,18 +128,6 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="input"
                   placeholder="Adv. Rajesh Kumar"
-                />
-              </div>
-            )}
-            {isSignUp && role === 'professional' && (
-              <div>
-                <label className="label">Bar Registration Number (optional)</label>
-                <input
-                  type="text"
-                  value={barNumber}
-                  onChange={(e) => setBarNumber(e.target.value)}
-                  className="input"
-                  placeholder="TN/1234/2020"
                 />
               </div>
             )}
@@ -172,6 +166,11 @@ export function AuthPage({ mode }: { mode: 'signin' | 'signup' }) {
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>
+            )}
+            {message && (
+              <p role="status" className="rounded-lg bg-success-50 p-3 text-sm text-success-700">
+                {message}
+              </p>
             )}
 
             <button type="submit" disabled={loading} className="btn-primary w-full">

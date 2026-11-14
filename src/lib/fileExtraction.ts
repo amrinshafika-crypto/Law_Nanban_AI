@@ -1,133 +1,82 @@
-// Browser-based document text extraction (real, no fake parsing)
-// Supports TXT (direct read), and basic PDF/DOCX text recovery.
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const MIN_READABLE_TEXT_LENGTH = 10;
 
-export async function extractTextFromFile(file: File): Promise<string> {
-  const name = file.name.toLowerCase();
-  const ext = name.split('.').pop() || '';
+export type SupportedFileType = 'pdf' | 'docx' | 'txt';
 
-  if (ext === 'txt') {
-    return await file.text();
-  }
-
-  if (ext === 'pdf') {
-    // Read the PDF as ArrayBuffer and extract text streams.
-    // This is a lightweight extractor that finds text in content streams.
-    // For complex PDFs, it will recover readable text where present.
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let text = '';
-    try {
-      text = extractPdfText(bytes);
-    } catch {
-      text = '';
-    }
-    if (text.trim().length < 10) {
-      text = `[PDF document: ${file.name}]\n\nThis PDF appears to contain image-based or encoded content. ` +
-        `Text extraction yielded minimal readable text. The document was received and stored, ` +
-        `but automated text analysis may be incomplete. Please verify the content manually.`;
-    }
-    return text;
-  }
-
-  if (ext === 'docx') {
-    // DOCX files are ZIP archives containing XML.
-    // Extract document.xml and strip tags.
-    const buffer = await file.arrayBuffer();
-    try {
-      text = await extractDocxText(buffer);
-    } catch {
-      text = '';
-    }
-    if (text.trim().length < 10) {
-      text = `[DOCX document: ${file.name}]\n\nText extraction from this DOCX file yielded minimal content. The file was received and stored.`;
-    }
-    return text;
-  }
-
-  return `[Document: ${file.name}]\n\nUnsupported file type. Text extraction is not available for this format.`;
-}
-
-function extractPdfText(bytes: Uint8Array): string {
-  // Simple PDF text extraction: find text between BT...ET markers in content streams
-  // and extract text from Tj and TJ operators.
-  const decoder = new TextDecoder('latin1');
-  const raw = decoder.decode(bytes);
-  const texts: string[] = [];
-
-  // Match text in parentheses (Tj operator) or arrays (TJ operator)
-  const tjPattern = /\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*Tj/g;
-  const tjArrayPattern = /\[(.*?)\]\s*TJ/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = tjPattern.exec(raw)) !== null) {
-    texts.push(unescapePdfString(match[1]));
-  }
-  while ((match = tjArrayPattern.exec(raw)) !== null) {
-    const inner = match[1];
-    const innerPattern = /\(([^()\\]*(?:\\.[^()\\]*)*)\)/g;
-    let innerMatch: RegExpExecArray | null;
-    while ((innerMatch = innerPattern.exec(inner)) !== null) {
-      texts.push(unescapePdfString(innerMatch[1]));
-    }
-  }
-
-  return texts.join(' ').replace(/\s+/g, ' ').trim();
-}
-
-function unescapePdfString(s: string): string {
-  return s
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\\(/g, '(')
-    .replace(/\\\)/g, ')')
-    .replace(/\\\\/g, '\\');
-}
-
-async function extractDocxText(buffer: ArrayBuffer): Promise<string> {
-  // Use DecompressionStream to unzip the DOCX and read word/document.xml
-  // Fallback: search for XML text in the raw zip
-  const decompressionStream = new DecompressionStream('gzip');
-  // DOCX uses ZIP, not gzip — we need a proper ZIP reader.
-  // Since we can't add a dependency, use a simple approach:
-  // find the document.xml content in the raw bytes.
-  const decoder = new TextDecoder('utf-8');
-  const bytes = new Uint8Array(buffer);
-  const raw = decoder.decode(bytes);
-
-  // Look for <w:t> tags which contain text in document.xml
-  const wtPattern = /<w:t[^>]*>([^<]*)<\/w:t>/g;
-  const texts: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = wtPattern.exec(raw)) !== null) {
-    texts.push(match[1]);
-  }
-
-  // Also look for paragraph breaks
-  const rawWithBreaks = raw.replace(/<w:p[\s>]/g, '\n<w:p ');
-  const wtPattern2 = /<w:t[^>]*>([^<]*)<\/w:t>/g;
-  const lines: string[] = [];
-  let lastIdx = 0;
-  const fullText = texts.join(' ');
-
-  if (fullText.trim().length > 0) {
-    return fullText;
-  }
-
-  // If no w:t tags found, try a broader XML text extraction
-  const xmlTextPattern = />([^<]{3,})</g;
-  while ((match = xmlTextPattern.exec(rawWithBreaks)) !== null) {
-    const txt = match[1].trim();
-    if (txt && !txt.startsWith('<?') && !txt.includes('xml')) {
-      lines.push(txt);
-    }
-  }
-
-  return lines.join('\n').trim();
-}
-
-export function detectFileType(fileName: string): 'pdf' | 'docx' | 'txt' | 'unknown' {
+export function detectFileType(fileName: string): SupportedFileType | 'unknown' {
   const ext = fileName.toLowerCase().split('.').pop();
   if (ext === 'pdf' || ext === 'docx' || ext === 'txt') return ext;
   return 'unknown';
+}
+
+export async function extractTextFromFile(file: File): Promise<string> {
+  if (file.size === 0) throw new Error('The selected file is empty. Choose a document with content.');
+  if (file.size > MAX_DOCUMENT_BYTES) throw new Error('The selected file is larger than the 10 MB limit.');
+
+  const fileType = detectFileType(file.name);
+  if (fileType === 'unknown') throw new Error('Unsupported file format. Choose a PDF, DOCX, or TXT file.');
+
+  const buffer = await file.arrayBuffer();
+  let text: string;
+
+  if (fileType === 'txt') {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } else if (fileType === 'pdf') {
+    text = await extractPdfText(buffer);
+  } else {
+    text = await extractDocxText(buffer);
+  }
+
+  const cleanText = text.split('\0').join('').replace(/\r\n?/g, '\n').trim();
+  if (fileType === 'pdf' && cleanText.length < MIN_READABLE_TEXT_LENGTH) {
+    throw new Error('No selectable text was found. The PDF may be empty, scanned, or image-only; OCR is not available.');
+  }
+  if (!cleanText) throw new Error('No readable text was found. The document may be empty or corrupted.');
+  if (cleanText.length < MIN_READABLE_TEXT_LENGTH) {
+    throw new Error('The document contains too little readable text to explain.');
+  }
+  return cleanText;
+}
+
+async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buffer);
+  if (new TextDecoder('ascii').decode(bytes.subarray(0, 5)) !== '%PDF-') {
+    throw new Error('The file does not contain a valid PDF header.');
+  }
+  const [pdfjs, worker] = await Promise.all([
+    import('pdfjs-dist/legacy/build/pdf.mjs'),
+    import('pdfjs-dist/legacy/build/pdf.worker.mjs?url'),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+
+  const loadingTask = pdfjs.getDocument({ data: bytes });
+  try {
+    const document = await loadingTask.promise;
+    const pages: string[] = [];
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item) => ('str' in item ? item.str : ''))
+        .filter(Boolean)
+        .join(' ');
+      if (pageText.trim()) pages.push(pageText);
+    }
+    return pages.join('\n\n');
+  } catch (error) {
+    const details = error instanceof Error ? ` ${error.message}` : '';
+    throw new Error(`The PDF could not be read. It may be corrupted or password-protected.${details}`);
+  } finally {
+    await loadingTask.destroy();
+  }
+}
+
+async function extractDocxText(buffer: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+    throw new Error('The file does not contain a valid DOCX archive.');
+  }
+  const { default: mammoth } = await import('mammoth/mammoth.browser.js');
+  const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+  return result.value;
 }

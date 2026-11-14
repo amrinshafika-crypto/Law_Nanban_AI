@@ -1,5 +1,9 @@
 export type Lang = 'en' | 'ta';
 
+export function isLang(value: unknown): value is Lang {
+  return value === 'en' || value === 'ta';
+}
+
 export const translations = {
   en: {
     appName: 'Law Nanban AI',
@@ -8,6 +12,7 @@ export const translations = {
       home: 'Home',
       ask: 'Ask Law Nanban',
       rights: 'Know Your Rights',
+      library: 'Legal Library',
       explain: 'Explain My Document',
       aid: 'Find Legal Aid',
       caseStatus: 'Case Status Guidance',
@@ -92,6 +97,7 @@ export const translations = {
       home: 'முகப்பு',
       ask: 'லா நம்பனிடம் கேளுங்கள்',
       rights: 'உங்கள் உரிமைகளை அறியுங்கள்',
+      library: 'சட்ட நூலகம்',
       explain: 'என் ஆவணத்தை விளக்கு',
       aid: 'சட்ட உதவியைக் கண்டறியுங்கள்',
       caseStatus: 'வழக்கு நிலை வழிகாட்டி',

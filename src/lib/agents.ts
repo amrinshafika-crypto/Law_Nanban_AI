@@ -1,4 +1,4 @@
-import type { Case, CaseCategory, Priority, LegalReference } from '@/types';
+import type { Case, CaseCategory, Hearing, Priority, LegalReference } from '@/types';
 
 // ============================================================
 // AGENT ORCHESTRATION ENGINE
@@ -60,7 +60,7 @@ function detectUrgency(description: string): string[] {
 function extractDates(text: string): { label: string; date: string }[] {
   const dates: { label: string; date: string }[] = [];
   const patterns = [
-    /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/g,
+    /\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/g,
     /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{2,4})\b/gi,
   ];
   for (const pattern of patterns) {
@@ -272,26 +272,46 @@ export interface ResearchResult {
   references: LegalReference[];
   explanation: string;
   limitations: string;
-  sourcesChecked: string[];
+  matchedRecordSources: string[];
 }
 
 export function runLegalResearchAgent(query: string, references: LegalReference[]): ResearchResult {
-  const lower = query.toLowerCase();
-  const queryWords = lower.split(/\s+/).filter((w) => w.length > 2);
+  const lower = query.trim().toLocaleLowerCase();
+  const tamilConcepts: [RegExp, string][] = [
+    [/கைது|காவல்|சிறை/gu, ' arrest detention custody '],
+    [/இணைய மோசடி|சைபர்|ஆன்லைன் மோசடி/gu, ' cyber fraud online '],
+    [/விவாகரத்து|திருமணம்|குடும்பம்/gu, ' divorce marriage family '],
+    [/நுகர்வோர்|பொருள் குறைபாடு/gu, ' consumer product service '],
+    [/சொத்து|நிலம்|உடைமை/gu, ' property land possession '],
+    [/சட்ட உதவி|இலவச சட்ட/gu, ' legal aid free legal '],
+    [/உரிமை|அடிப்படை உரிமை/gu, ' right fundamental rights '],
+    [/அரசியலமைப்பு|அரசியல் சட்டம்/gu, ' constitution constitutional '],
+    [/ஜாமீன்/gu, ' bail arrest '],
+    [/சான்று|ஆதாரம்/gu, ' evidence trial '],
+    [/வரி|வருமான வரி/gu, ' tax income '],
+    [/தகவல் அறியும் உரிமை|தகவல் உரிமை/gu, ' rti information '],
+  ];
+  const expandedQuery = tamilConcepts.reduce((text, [pattern, expansion]) => text.replace(pattern, expansion), ` ${lower} `);
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'what', 'when', 'where', 'how', 'can', 'does', 'should', 'would', 'have', 'from', 'about', 'this', 'that', 'are', 'was', 'you', 'your', 'நான்', 'என்ன', 'எப்படி']);
+  const queryWords = new Set((expandedQuery.match(/[\p{L}\p{N}]+/gu) || [])
+    .filter((word) => word.length > 1 && !stopWords.has(word)));
 
   const scored = references.map((ref) => {
-    const refText = ((ref.title + ' ' + ref.summary + ' ' + ref.keywords.join(' ') + ' ' + ref.category)
-      .toLowerCase());
+    const keywords = Array.isArray(ref.keywords) ? ref.keywords : [];
+    const allText = [ref.title, ref.summary || '', ref.category, ...keywords].join(' ').toLocaleLowerCase();
+    const referenceWords = new Set(allText.match(/[\p{L}\p{N}]+/gu) || []);
+    const keywordWords = new Set(keywords.join(' ').toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
     let score = 0;
     for (const word of queryWords) {
-      if (refText.includes(word)) score += 1;
-      if (ref.keywords.some((kw) => kw.toLowerCase().includes(word))) score += 2;
+      if (referenceWords.has(word)) score += 2;
+      if (keywordWords.has(word)) score += 2;
+      if (word.length >= 5 && [...referenceWords].some((candidate) => candidate.startsWith(word) || word.startsWith(candidate))) score += 1;
     }
     return { ref, score };
   });
 
   const matched = scored
-    .filter((x) => x.score > 0)
+    .filter((x) => x.score >= 2)
     .sort((a, b) => b.score - a.score)
     .slice(0, 5)
     .map((x) => x.ref);
@@ -314,7 +334,7 @@ export function runLegalResearchAgent(query: string, references: LegalReference[
     rti: 'Right to information',
   };
   for (const [kw, topic] of Object.entries(topicMap)) {
-    if (lower.includes(kw)) {
+    if (expandedQuery.includes(kw)) {
       identifiedTopic = topic;
       break;
     }
@@ -322,26 +342,17 @@ export function runLegalResearchAgent(query: string, references: LegalReference[
 
   const explanation = matched.length > 0
     ? [
-        `Based on your question, the Legal Research Agent identified this as relating to: ${identifiedTopic}.`,
-        ``,
-        `The following trusted legal sources were retrieved from our reference database:`,
-        ...matched.map((r, i) => `${i + 1}. ${r.title}${r.citation ? ` (${r.citation})` : ''} — ${r.summary?.slice(0, 150) || 'Reference document'}`),
-        ``,
-        `These sources are drawn from Indian statutes, constitutional provisions, and official government resources. They provide the legal framework relevant to your question.`,
+        `The local search found these catalogue entries that may relate to: ${identifiedTopic}.`,
+        '',
+        'These records are shown as stored; their presence here does not mean the source was checked during this search.',
+        ...matched.map((r, i) => `${i + 1}. ${r.title}${r.citation ? ` (${r.citation})` : ''} ? ${r.summary?.slice(0, 150) || 'No explanation is available in this record.'}`),
+        '',
+        'Review the listed source information to decide whether it applies to your question.',
       ].join('\n')
-    : `The Legal Research Agent could not find directly matching references in our trusted source database for your query about: "${query}". This does not mean no relevant law exists — our reference database covers major Indian statutes and constitutional provisions but is not exhaustive. For specific legal advice, consult a qualified lawyer or visit your nearest Legal Services Authority.`;
+    : `No relevant match was found in the available reference records${references.length ? '' : ' because no references are currently available'}. This does not mean that no law applies; the catalogue is limited. For guidance about your circumstances, contact a qualified lawyer or Legal Services Authority.`;
 
-  const limitations = matched.length > 0
-    ? 'This information is based on our curated reference database of major Indian legal sources. It is general legal information, not legal advice. Laws are amended and interpretations evolve — always verify current law with a qualified lawyer. The agent does not fabricate laws, section numbers, or citations.'
-    : 'No matching references were found. The agent does not fabricate laws, section numbers, judgments, or citations. If reliable references cannot be found, this limitation is communicated honestly rather than guessing.';
-
-  const sourcesChecked = [
-    'India Code (indiacode.nic.in)',
-    'Constitution of India',
-    'Supreme Court of India jurisprudence',
-    'eCourts Services',
-    'Government legal resources (cybercrime.gov.in)',
-  ];
+  const limitations = 'This is local catalogue search, not an AI-generated answer or live legal verification. The records may be incomplete or out of date. It is general legal information, not legal advice; consult a qualified lawyer about your circumstances.';
+  const matchedRecordSources = matched.map((reference) => reference.source);
 
   return {
     query,
@@ -349,7 +360,7 @@ export function runLegalResearchAgent(query: string, references: LegalReference[
     references: matched,
     explanation,
     limitations,
-    sourcesChecked,
+    matchedRecordSources,
   };
 }
 
@@ -358,7 +369,6 @@ export function runLegalResearchAgent(query: string, references: LegalReference[
 // ============================================================
 
 export function runLegalAidAgent(query: string): { guidance: string; eligibilityInfo: string } {
-  const lower = query.toLowerCase();
   const isTamil = /[\u0b80-\u0bff]/.test(query);
 
   const guidance = isTamil
@@ -387,8 +397,8 @@ export interface SchedulingConflict {
 export function detectSchedulingConflicts(
   newDate: Date,
   durationMinutes: number,
-  existingHearings: { hearing_date: string; duration_minutes: number; case_id: string; title: string }[],
-  cases: Case[],
+  existingHearings: Pick<Hearing, 'hearing_date' | 'duration_minutes' | 'case_id' | 'title'>[],
+  cases: Pick<Case, 'id' | 'title'>[],
 ): SchedulingConflict[] {
   const conflicts: SchedulingConflict[] = [];
   const newEnd = new Date(newDate.getTime() + durationMinutes * 60000);
@@ -421,12 +431,12 @@ export function detectSchedulingConflicts(
       }
     }
   }
-  return conflicts.sort((a, b) => (a.severity === 'hard' ? -1 : 1));
+  return conflicts.sort((a, b) => a.severity === b.severity ? 0 : a.severity === 'hard' ? -1 : 1);
 }
 
 export function suggestTimeSlots(
   date: Date,
-  existingHearings: { hearing_date: string; duration_minutes: number }[],
+  existingHearings: Pick<Hearing, 'hearing_date' | 'duration_minutes'>[],
   durationMinutes: number,
 ): { time: string; available: boolean }[] {
   const slots: { time: string; available: boolean }[] = [];
@@ -533,12 +543,34 @@ export interface OrchestratorResult {
   executionLog: { agent: string; status: string; timestamp: string }[];
 }
 
+type SchedulingHearing = Pick<Hearing, 'hearing_date' | 'duration_minutes' | 'case_id' | 'title'>;
+type SchedulingCase = Pick<Case, 'id' | 'title'>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isSchedulingHearing(value: unknown): value is SchedulingHearing {
+  if (!isRecord(value)) return false;
+  return typeof value.hearing_date === 'string'
+    && Number.isFinite(Date.parse(value.hearing_date))
+    && typeof value.duration_minutes === 'number'
+    && Number.isFinite(value.duration_minutes)
+    && value.duration_minutes > 0
+    && typeof value.case_id === 'string'
+    && typeof value.title === 'string';
+}
+
+function isSchedulingCase(value: unknown): value is SchedulingCase {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string';
+}
+
 export async function orchestrate(
   taskType: 'triage' | 'document_analysis' | 'legal_research' | 'legal_aid' | 'scheduling' | 'verification',
   input: Record<string, unknown>,
   references: LegalReference[],
 ): Promise<OrchestratorResult> {
-  const executionLog: { agent: string; status: string; timestamp: string } = [];
+  const executionLog: { agent: string; status: string; timestamp: string }[] = [];
   const now = () => new Date().toISOString();
 
   executionLog.push({ agent: 'orchestrator', status: 'started', timestamp: now() });
@@ -572,6 +604,32 @@ export async function orchestrate(
       agentResult = runLegalAidAgent(input.query as string);
       executionLog.push({ agent: 'legal_aid', status: 'completed', timestamp: now() });
       break;
+    case 'scheduling': {
+      if (typeof input.date !== 'string' || !Number.isFinite(Date.parse(input.date))) {
+        throw new Error('Scheduling requires a valid date.');
+      }
+      if (typeof input.durationMinutes !== 'number' || !Number.isFinite(input.durationMinutes)
+        || input.durationMinutes <= 0 || input.durationMinutes > 1440) {
+        throw new Error('Scheduling requires a duration between 1 and 1440 minutes.');
+      }
+      if (!Array.isArray(input.existingHearings) || !input.existingHearings.every(isSchedulingHearing)
+        || !Array.isArray(input.cases) || !input.cases.every(isSchedulingCase)) {
+        throw new Error('Scheduling requires valid existingHearings and cases arrays.');
+      }
+
+      agentName = 'scheduling';
+      executionLog.push({ agent: 'scheduling', status: 'started', timestamp: now() });
+      const date = new Date(input.date);
+      const existingHearings = input.existingHearings;
+      const cases = input.cases;
+      agentResult = {
+        conflicts: detectSchedulingConflicts(date, input.durationMinutes, existingHearings, cases),
+        suggestions: suggestTimeSlots(date, existingHearings, input.durationMinutes),
+        booked: false,
+      };
+      executionLog.push({ agent: 'scheduling', status: 'completed', timestamp: now() });
+      break;
+    }
     case 'verification':
       agentName = 'verification';
       executionLog.push({ agent: 'verification', status: 'started', timestamp: now() });
@@ -583,7 +641,7 @@ export async function orchestrate(
   }
 
   let verificationResult: VerificationResult | undefined;
-  if (taskType !== 'verification') {
+  if (taskType !== 'verification' && taskType !== 'scheduling') {
     executionLog.push({ agent: 'verification', status: 'started', timestamp: now() });
     verificationResult = runVerificationAgent({
       references: taskType === 'legal_research' ? (agentResult as ResearchResult).references : references,
@@ -599,7 +657,7 @@ export async function orchestrate(
   return {
     agent: agentName,
     result: agentResult,
-    verified: verificationResult?.verified ?? true,
+    verified: taskType === 'scheduling' ? false : verificationResult?.verified ?? true,
     verificationResult,
     executionLog,
   };
