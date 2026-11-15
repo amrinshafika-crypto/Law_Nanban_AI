@@ -1,11 +1,13 @@
-import { ArrowRight, CalendarDays, FileText, FolderKanban } from 'lucide-react';
+import { ArrowRight, CalendarDays, FileText, FolderKanban, ListTodo } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, LoadingState, PageHeader, StatCard, statusBadge } from '@/components/ui';
-import { useCases, useHearings } from '@/lib/hooks';
+import { useAgentTasks, useCases, useDocuments, useHearings } from '@/lib/hooks';
 
 export function Dashboard() {
   const { cases, loading, error } = useCases();
   const { hearings, loading: hearingsLoading, error: hearingsError } = useHearings();
+  const { tasks, loading: tasksLoading } = useAgentTasks();
+  const { documents, loading: documentsLoading, error: documentsError } = useDocuments();
   const upcoming = hearings.filter((hearing) => new Date(hearing.hearing_date) >= new Date()).slice(0, 5);
 
   return (
@@ -13,11 +15,12 @@ export function Dashboard() {
       <PageHeader title="Professional Overview" subtitle="A current view of your assigned casework." />
       {error ? <p role="alert" className="mb-4 text-sm text-danger-700">Cases could not be loaded: {error}</p> : loading ? <LoadingState message="Loading your casework..." /> : (
         <>
-          <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
             <StatCard label="Assigned cases" value={cases.length} icon={<FolderKanban size={20} />} />
             <StatCard label="Active cases" value={cases.filter((item) => item.status === 'active' || item.status === 'hearing').length} icon={<ArrowRight size={20} />} color="accent" />
             <StatCard label="Urgent priority" value={cases.filter((item) => item.priority === 'urgent').length} icon={<FolderKanban size={20} />} color="danger" />
             <StatCard label="Upcoming hearings" value={hearingsLoading || hearingsError ? '—' : upcoming.length} icon={<CalendarDays size={20} />} color="gold" />
+            <StatCard label="Pending agent tasks" value={tasksLoading ? '—' : tasks.filter((task) => task.status === 'pending' || task.status === 'running').length} icon={<ListTodo size={20} />} color="accent" />
           </div>
           <div className="grid lg:grid-cols-2 gap-6">
             <Card className="p-5">
@@ -40,6 +43,10 @@ export function Dashboard() {
                   ))}
                 </ul>
               )}
+            </Card>
+            <Card className="p-5">
+              <div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-navy-900">Recent documents</h2><Link to="/app/documents" className="text-sm text-accent-700 hover:underline">Open workspace</Link></div>
+              {documentsError ? <p role="alert" className="text-sm text-danger-700">Documents could not be loaded: {documentsError}</p> : documentsLoading ? <LoadingState message="Loading recent documents..." /> : documents.length === 0 ? <EmptyState icon={<FileText size={26} />} title="No recent documents" description="Documents saved to your workspace will appear here." /> : <ul className="divide-y divide-navy-100">{documents.slice(0, 5).map((document) => <li key={document.id} className="py-3"><p className="truncate text-sm font-medium text-navy-800">{document.title}</p><p className="mt-1 text-xs text-navy-500">{document.file_type.toUpperCase()} · {new Date(document.created_at).toLocaleDateString()} · {document.status}</p></li>)}</ul>}
             </Card>
             <Card className="p-5">
               <div className="flex items-center justify-between mb-4">

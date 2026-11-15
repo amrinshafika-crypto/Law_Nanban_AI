@@ -52,75 +52,87 @@ export interface LegalLibraryAct {
   sections: LegalLibrarySection[];
 }
 
-function toCamelRecord(record: Record<string, any> | null | undefined) {
-  if (!record) {
-    return {} as Record<string, any>;
-  }
+type JsonRecord = Record<string, unknown>;
 
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [
-      key.replace(/_([a-z])/g, (_, char) => char.toUpperCase()),
-      value,
-    ]),
-  );
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function normalizeSection(rawSection: Record<string, any> | null | undefined): LegalLibrarySection {
+function toCamelRecord(record: JsonRecord | null | undefined): JsonRecord {
+  if (!record) return {};
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => [
+    key.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase()), value,
+  ]));
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function normalizeSection(rawSection: JsonRecord | null | undefined): LegalLibrarySection {
   const section = toCamelRecord(rawSection ?? {});
+  const number = String(section.number ?? '');
+  const start = typeof section.sourcePageStart === 'number' ? section.sourcePageStart : typeof section.sourcePageStart === 'string' ? Number(section.sourcePageStart) : null;
+  const end = typeof section.sourcePageEnd === 'number' ? section.sourcePageEnd : typeof section.sourcePageEnd === 'string' ? Number(section.sourcePageEnd) : null;
   return {
-    id: String(section.id ?? `${section.number ?? 'section'}-${Math.random().toString(36).slice(2, 9)}`),
-    number: String(section.number ?? ''),
+    id: String(section.id ?? `${number}-section`),
+    number,
     title: String(section.title ?? 'Untitled section'),
     legalText: String(section.legalText ?? ''),
-    sourcePageStart: typeof section.sourcePageStart === 'number' ? section.sourcePageStart : (typeof section.sourcePageStart === 'string' ? Number(section.sourcePageStart) : null),
-    sourcePageEnd: typeof section.sourcePageEnd === 'number' ? section.sourcePageEnd : (typeof section.sourcePageEnd === 'string' ? Number(section.sourcePageEnd) : null),
-    sourceUrl: section.sourceUrl ?? section.sourceURL ?? null,
-    consolidatedAsOf: section.consolidatedAsOf ?? null,
-    extractionStatus: section.extractionStatus ?? 'needs_manual_review',
-    reviewStatus: section.reviewStatus ?? (section.verified ? 'Verified' : 'Under review'),
+    sourcePageStart: Number.isFinite(start) ? start : null,
+    sourcePageEnd: Number.isFinite(end) ? end : null,
+    sourceUrl: textOrNull(section.sourceUrl ?? section.sourceURL),
+    consolidatedAsOf: textOrNull(section.consolidatedAsOf),
+    extractionStatus: typeof section.extractionStatus === 'string' ? section.extractionStatus : 'needs_manual_review',
+    reviewStatus: typeof section.reviewStatus === 'string' ? section.reviewStatus : (section.verified ? 'Verified' : 'Under review'),
     verified: Boolean(section.verified),
   };
 }
 
-function normalizeAct(rawAct: Record<string, any> | null | undefined): LegalLibraryAct {
+function normalizeAct(rawAct: JsonRecord | null | undefined): LegalLibraryAct {
   const act = toCamelRecord(rawAct ?? {});
-  const category = LEGAL_LIBRARY_CATEGORIES.includes(act.category as LibraryCategory)
-    ? (act.category as LibraryCategory)
+  const rawCategory = typeof act.category === 'string' ? act.category : '';
+  const category = LEGAL_LIBRARY_CATEGORIES.includes(rawCategory as LibraryCategory)
+    ? (rawCategory as LibraryCategory)
     : 'Other Legislation';
 
   return {
     id: String(act.id ?? ''),
     slug: String(act.slug ?? ''),
     title: String(act.title ?? 'Untitled Act'),
-    shortTitle: act.shortTitle ?? act.short_title ?? null,
-    actNumber: act.actNumber ?? act.act_number ?? null,
-    actYear: act.actYear ?? act.act_year ?? null,
+    shortTitle: textOrNull(act.shortTitle ?? act.short_title),
+    actNumber: textOrNull(act.actNumber ?? act.act_number),
+    actYear: textOrNull(act.actYear ?? act.act_year),
     jurisdiction: act.jurisdiction === 'Tamil Nadu State Law'
       ? 'Tamil Nadu State Law'
       : 'Central Law applicable in Tamil Nadu',
     category,
-    applicableTerritory: act.applicableTerritory ?? act.applicable_territory ?? null,
-    officialSourceName: act.officialSourceName ?? act.official_source_name ?? null,
-    officialSourceUrl: act.officialSourceUrl ?? act.official_source_url ?? null,
-    effectiveDate: act.effectiveDate ?? act.effective_date ?? null,
-    consolidationDate: act.consolidationDate ?? act.consolidation_date ?? null,
-    verificationStatus: act.verificationStatus ?? act.verification_status ?? 'Metadata only',
+    applicableTerritory: textOrNull(act.applicableTerritory ?? act.applicable_territory),
+    officialSourceName: textOrNull(act.officialSourceName ?? act.official_source_name),
+    officialSourceUrl: textOrNull(act.officialSourceUrl ?? act.official_source_url),
+    effectiveDate: textOrNull(act.effectiveDate ?? act.effective_date),
+    consolidationDate: textOrNull(act.consolidationDate ?? act.consolidation_date),
+    verificationStatus: typeof (act.verificationStatus ?? act.verification_status) === 'string' ? String(act.verificationStatus ?? act.verification_status) : 'Metadata only',
     verified: Boolean(act.verified),
-    summary: act.summary ?? null,
+    summary: textOrNull(act.summary),
     keywords: Array.isArray(act.keywords) ? act.keywords.map((keyword) => String(keyword)) : [],
-    sections: Array.isArray(act.sections) ? act.sections.map((section) => normalizeSection(section)) : [],
+    sections: Array.isArray(act.sections) ? act.sections.filter(isRecord).map((section) => normalizeSection(section)) : [],
   };
 }
 
+function records(value: unknown): JsonRecord[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
 const datasetActs = [
-  ...(Array.isArray((centralActsJson as any)) ? (centralActsJson as any[]).map((entry) => normalizeAct(entry)) : []),
-  ...(Array.isArray((stateActsJson as any)) ? (stateActsJson as any[]).map((entry) => normalizeAct(entry)) : []),
+  ...records(centralActsJson).map((entry) => normalizeAct(entry)),
+  ...records(stateActsJson).map((entry) => normalizeAct(entry)),
 ];
 
 export const legalLibraryActs: LegalLibraryAct[] = datasetActs;
 
 export function normalizeSearchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 export function getJurisdictionName(jurisdiction: LibraryJurisdiction) {

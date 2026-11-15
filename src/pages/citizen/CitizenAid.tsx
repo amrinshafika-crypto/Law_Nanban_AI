@@ -6,23 +6,21 @@ import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/
 import { orchestrate, type OrchestratorResult } from '@/lib/agents';
 import { safeExternalUrl, safePhoneUrl } from '@/lib/links';
 import { useLegalAidResources } from '@/lib/hooks';
+import { filterLegalAidDirectory, TAMIL_NADU_DLSA_CONTACTS, TAMIL_NADU_DLSA_RESOURCES, TNSLSA_DIRECTORY_URL, TNSLSA_DLSA_PDF_URL } from './legalAidDirectory';
 
 export function CitizenAid({ lang }: { lang: Lang }) {
   const t = useTranslations(lang);
   const { resources, loading, error, reload } = useLegalAidResources();
   const [query, setQuery] = useState('');
   const [authorityType, setAuthorityType] = useState('all');
+  const [selectedDistrict, setSelectedDistrict] = useState('all');
   const [orchestratorResult, setOrchestratorResult] = useState<OrchestratorResult | null>(null);
-  const types = [...new Set(resources.map((resource) => resource.authority_type).filter(Boolean))].sort();
-  const filtered = useMemo(() => {
-    const term = query.trim().toLocaleLowerCase();
-    return resources.filter((resource) => {
-      const matchesType = authorityType === 'all' || resource.authority_type === authorityType;
-      const matchesQuery = !term || [resource.name, resource.authority_type, resource.state, resource.district, resource.address, resource.description, resource.eligibility, resource.email, resource.phone, ...resource.services]
-        .some((value) => value?.toLocaleLowerCase().includes(term));
-      return matchesType && matchesQuery;
-    });
-  }, [resources, query, authorityType]);
+  const directoryResources = useMemo(() => [
+    ...resources.filter((resource) => resource.authority_type !== 'district'),
+    ...TAMIL_NADU_DLSA_RESOURCES,
+  ], [resources]);
+  const types = [...new Set(directoryResources.map((resource) => resource.authority_type).filter(Boolean))].sort();
+  const filtered = useMemo(() => filterLegalAidDirectory(directoryResources, query, authorityType, selectedDistrict), [directoryResources, query, authorityType, selectedDistrict]);
 
   useEffect(() => {
     const activeQuery = query.trim() || 'legal aid in Tamil Nadu';
@@ -41,9 +39,10 @@ export function CitizenAid({ lang }: { lang: Lang }) {
           <option value="all">{t.aid.allTypes}</option>
           {types.map((type) => <option key={type} value={type}>{type}</option>)}
         </select>
+        <label className="sm:col-span-2"><span className="sr-only">{lang === 'ta' ? 'மாவட்டத்தைத் தேர்ந்தெடுக்கவும்' : 'Select a Tamil Nadu district'}</span><select className="input" value={selectedDistrict} onChange={(event) => { setSelectedDistrict(event.target.value); setAuthorityType(event.target.value === 'all' ? 'all' : 'district'); }} aria-label={lang === 'ta' ? 'மாவட்டத்தைத் தேர்ந்தெடுக்கவும்' : 'Select a Tamil Nadu district'}><option value="all">{lang === 'ta' ? 'அனைத்து மாவட்டங்களும்' : 'All 38 Tamil Nadu districts'}</option>{TAMIL_NADU_DLSA_CONTACTS.map((contact) => <option key={contact.district} value={contact.district}>{contact.district}</option>)}</select></label>
       </div>
-      {error ? <div role="alert" className="text-sm text-danger-700">{lang === 'ta' ? 'சட்ட உதவி பதிவுகளை ஏற்ற முடியவில்லை.' : 'Legal-aid resources could not be loaded.'} {error} <button type="button" className="underline" onClick={() => void reload()}>{lang === 'ta' ? 'மீண்டும் முயற்சிக்கவும்' : 'Retry'}</button></div>
-        : loading ? <LoadingState message={lang === 'ta' ? 'சேவைப் பதிவுகளை ஏற்றுகிறது...' : 'Loading directory records...'} />
+      {error && <div role="alert" className="text-sm text-danger-700">{lang === 'ta' ? 'சட்ட உதவி பதிவுகளை ஏற்ற முடியவில்லை.' : 'Some additional resources could not be loaded; official district contacts remain available.'} {error} <button type="button" className="underline" onClick={() => void reload()}>{lang === 'ta' ? 'மீண்டும் முயற்சிக்கவும்' : 'Retry'}</button></div>}
+        {loading && resources.length === 0 ? <LoadingState message={lang === 'ta' ? 'சேவைப் பதிவுகளை ஏற்றுகிறது...' : 'Loading directory records...'} />
           : filtered.length === 0 ? <EmptyState icon={<HeartHandshake size={30} />} title={query || authorityType !== 'all' ? (lang === 'ta' ? 'பொருந்தும் பதிவுகள் இல்லை' : 'No matching resources') : (lang === 'ta' ? 'சேவைப் பதிவுகள் இல்லை' : 'No directory entries available')} description={lang === 'ta' ? 'தரவுத்தளத்தில் காட்டுவதற்கு பொருந்தும் பதிவு இல்லை.' : 'There are no matching records in the directory right now.'} />
             : <div className="grid md:grid-cols-2 gap-4">{filtered.map((resource) => {
               const website = safeExternalUrl(resource.website);
@@ -54,10 +53,10 @@ export function CitizenAid({ lang }: { lang: Lang }) {
                 <p className="text-sm text-navy-500 mt-1 capitalize">{resource.authority_type}{resource.district ? ` · ${resource.district}` : ''}{resource.state ? `, ${resource.state}` : ''}</p>
                 {lang === 'ta' && <p className="mt-3 rounded bg-amber-50 p-2 text-xs text-amber-900">கீழே உள்ள அடைவு விவரங்கள் தரவுத்தளத்தில் சேமிக்கப்பட்ட மொழியில் காட்டப்படுகின்றன; மொழிபெயர்க்கப்படவில்லை.</p>}
                 {resource.description && <p className="text-sm text-navy-700 mt-3">{resource.description}</p>}
-                {resource.address && <p className="text-sm text-navy-600 mt-3">{resource.address}</p>}
+                {(resource.address || resource.authority_type === 'district') && <p className="text-sm text-navy-600 mt-3">{resource.address || (lang === 'ta' ? 'அதிகாரப்பூர்வ கோப்பகத்தில் முகவரி கிடைக்கவில்லை.' : 'Address not available in official directory.')}</p>}
                 {resource.services?.length > 0 && <p className="text-sm text-navy-600 mt-3"><span className="font-medium">{t.aid.services}: </span>{resource.services.join(', ')}</p>}
                 {resource.eligibility && <p className="text-sm text-navy-600 mt-2"><span className="font-medium">{t.aid.eligibility}: </span>{resource.eligibility}</p>}
-                <div className="flex flex-wrap gap-3 mt-4">{phone && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={phone}><Phone size={15} />{t.aid.call} {resource.phone}</a>}{email && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={`mailto:${email}`}><Mail size={15} />{email}</a>}{website && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={website} target="_blank" rel="noopener noreferrer">{t.aid.visit}<ExternalLink size={14} /></a>}</div>
+                <div className="flex flex-wrap gap-3 mt-4">{phone && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={phone}><Phone size={15} />{t.aid.call} {resource.phone}</a>}{email && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={`mailto:${email}`}><Mail size={15} />{email}</a>}{resource.authority_type === 'district' ? <><a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={TNSLSA_DIRECTORY_URL} target="_blank" rel="noopener noreferrer">Official TNSLSA statewide directory <ExternalLink size={14} /></a><a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={TNSLSA_DLSA_PDF_URL} target="_blank" rel="noopener noreferrer">View official 38-district contact PDF <ExternalLink size={14} /></a></> : website && <a className="inline-flex items-center gap-1 text-sm text-accent-700 hover:underline" href={website} target="_blank" rel="noopener noreferrer">{t.aid.visit}<ExternalLink size={14} /></a>}</div>
                 <p className="text-xs text-navy-400 mt-4">{lang === 'ta' ? 'தொடர்பு விவரங்கள் மாறக்கூடும்; வழங்குநரிடம் உறுதிப்படுத்தவும். “சரிபார்க்கப்பட்டது” குறி தனிப்பட்ட தற்போதைய சரிபார்ப்பு அல்ல.' : 'Contact details can change; confirm them with the provider. “Verified” is a stored marker, not an independent current check.'}</p>
               </Card>;
             })}</div>}

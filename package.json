@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:citizen-markdown": "node --test tests/citizen-markdown.test.mjs",
+    "test:document-analysis": "node --test tests/document-analysis.test.mjs",
+    "test:legal-aid-directory": "node --test tests/legal-aid-directory.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"
@@ -18,8 +21,11 @@
     "pdfjs-dist": "^6.5.438",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.5",
-    "recharts": "^3.10.1"
+    "recharts": "^3.10.1",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",

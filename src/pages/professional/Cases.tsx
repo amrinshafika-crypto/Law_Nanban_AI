@@ -15,7 +15,7 @@ export function Cases() {
 
   return (
     <>
-      <PageHeader title="Cases" subtitle="Cases assigned to your professional account." action={<Link to="/app/triage" className="btn-primary"><Plus size={16} /> New triage</Link>} />
+      <PageHeader title="Cases" subtitle="Cases assigned to your professional account." action={<div className="flex flex-wrap gap-2"><Link to="/app/triage" className="btn-outline">Case triage</Link><Link to="/app/cases/new" className="btn-primary"><Plus size={16} /> New case</Link></div>} />
       <label className="relative block mb-5">
         <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-navy-400" />
         <input className="input pl-10" type="search" value={query} onChange={(event) => setSearchParams(event.target.value ? { q: event.target.value } : {})} placeholder="Search title, case number, court..." aria-label="Search cases" />

@@ -1,0 +1,2 @@
+[functions.law-nanban-chat]
+verify_jwt = false

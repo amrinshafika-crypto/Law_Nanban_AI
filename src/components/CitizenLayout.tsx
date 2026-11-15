@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Home, MessageCircle, Scale, FileText, HeartHandshake,
-  FolderSearch, Languages, LogOut, Menu, X, BookOpen,
+  FolderSearch, Languages, LogOut, Menu, X,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/context/AuthContext';
@@ -12,8 +12,7 @@ import type { Lang } from '@/i18n';
 const navItems = [
   { to: '/portal', labelKey: 'home', icon: Home, end: true },
   { to: '/portal/ask', labelKey: 'ask', icon: MessageCircle },
-  { to: '/portal/rights', labelKey: 'rights', icon: Scale },
-  { to: '/portal/legal-library', labelKey: 'library', icon: BookOpen },
+  { to: '/portal/rights', labelKey: 'rightsLibrary', icon: Scale },
   { to: '/portal/explain', labelKey: 'explain', icon: FileText },
   { to: '/portal/aid', labelKey: 'aid', icon: HeartHandshake },
   { to: '/portal/case-status', labelKey: 'caseStatus', icon: FolderSearch },

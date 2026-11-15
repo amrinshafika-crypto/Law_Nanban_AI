@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, Brain, FileText, GitBranch,
-  BookOpen, Calendar, HeartHandshake, Bot, BarChart3, Settings,
+  BookOpen, Calendar, HeartHandshake, Bot, BarChart3, Settings, PenTool,
   LogOut, Menu, X, Bell, Search, ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -15,6 +15,7 @@ const navItems = [
   { to: '/app/documents', label: 'Documents', icon: FileText },
   { to: '/app/timeline', label: 'Case Timeline', icon: GitBranch },
   { to: '/app/research', label: 'Legal Research', icon: BookOpen },
+  { to: '/app/drafting', label: 'Legal Drafting', icon: PenTool },
   { to: '/app/library', label: 'Legal Library', icon: BookOpen },
   { to: '/app/calendar', label: 'Hearing Calendar', icon: Calendar },
   { to: '/app/legal-aid', label: 'Legal Aid Resources', icon: HeartHandshake },
