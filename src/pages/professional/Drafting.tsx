@@ -5,6 +5,7 @@ import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useCases } from '@/lib/hooks';
+import { runProfessionalAgents } from '@/lib/professionalAi';
 
 type DraftRecord = { id: string; case_id: string | null; document_type: string; title: string; content: string; updated_at: string };
 const documentTypes = ['Legal notice outline', 'Affidavit structure', 'Written submissions outline', 'Client case brief', 'Case chronology', 'Custom document'];
@@ -58,13 +59,20 @@ export function Drafting() {
     event.preventDefault();
     if (generating) return;
     const caseItem = cases.find((item) => item.id === caseId);
-    const prompt = JSON.stringify({ documentType: type, title: title || caseItem?.title || '', case: caseItem ? { caseNumber: caseItem.case_number, title: caseItem.title, court: caseItem.court_name } : null, parties, facts, verifiedProvisions: provisions, instructions });
+    const context = { documentType: type, title: title || caseItem?.title || '', case: caseItem ? { caseNumber: caseItem.case_number, title: caseItem.title, court: caseItem.court_name } : null, parties, facts, verifiedProvisions: provisions, instructions };
     setGenerating(true); setError(''); setMessage('');
-    const { data, error: invokeError } = await supabase.functions.invoke('law-nanban-chat', { body: { mode: 'draft', question: prompt } });
-    setGenerating(false);
-    if (invokeError || typeof data?.answer !== 'string' || !data.answer.trim()) { setError(invokeError?.message || 'The AI returned no draft. Please try again.'); return; }
-    setContent(data.answer.trim());
-    setMessage('AI working draft generated. Verify every fact and provision with the source record before use.');
+    try {
+      const batch = await runProfessionalAgents(['legal_drafting'], context);
+      const draft = batch.results[0]?.answer.trim();
+      if (!draft) throw new Error('The AI returned no draft. Please try again.');
+      setContent(draft);
+      setMessage('AI working draft generated. Verify every fact and provision with the source record before use.');
+      if (batch.failures.length) setError(batch.failures[0].message);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The AI could not generate this draft. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function save(event: FormEvent) {

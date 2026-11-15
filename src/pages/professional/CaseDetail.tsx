@@ -1,11 +1,12 @@
 import { Link, useParams } from 'react-router-dom';
 import { FormEvent, useEffect, useState } from 'react';
-import { ArrowLeft, CalendarDays, FileText, GitBranch, Pencil } from 'lucide-react';
+import { ArrowLeft, Brain, CalendarDays, FileText, GitBranch, Pencil } from 'lucide-react';
 import { Badge, Card, EmptyState, LoadingState, PageHeader, priorityBadge, statusBadge } from '@/components/ui';
 import { useCase, useCaseEvents } from '@/lib/hooks';
 import { supabase } from '@/lib/supabase';
 import type { CaseParty } from '@/types';
 import { useAuth } from '@/context/AuthContext';
+import { runProfessionalAgents, type ProfessionalAgentName } from '@/lib/professionalAi';
 
 export function CaseDetail() {
   const { id } = useParams();
@@ -22,6 +23,9 @@ export function CaseDetail() {
   const [hearingDate, setHearingDate] = useState('');
   const [hearingTitle, setHearingTitle] = useState('Hearing');
   const [hearingError, setHearingError] = useState('');
+  const [aiResults, setAiResults] = useState<Partial<Record<ProfessionalAgentName, string>>>({});
+  const [aiError, setAiError] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
   useEffect(() => {
     if (!id) return;
     let active = true;
@@ -62,6 +66,24 @@ export function CaseDetail() {
     setNote(''); void reloadEvents();
   }
 
+  async function runCaseAnalysis() {
+    if (!caseData || aiLoading) return;
+    setAiLoading(true); setAiError(''); setAiResults({});
+    try {
+      const batch = await runProfessionalAgents(['case_summary', 'case_strategy'], {
+        case: { caseNumber: caseData.case_number, title: caseData.title, description: caseData.description, category: caseData.category, status: caseData.status, priority: caseData.priority, priorityNotes: caseData.priority_reason, filingDate: caseData.filing_date, nextHearingDate: caseData.next_hearing_date, court: caseData.court_name, tags: caseData.tags },
+        parties: parties.map((party) => ({ name: party.name, role: party.role })),
+        timeline: events.map((event) => ({ title: event.title, description: event.description, date: event.event_date, category: event.category, sourceType: event.source_type })),
+      });
+      setAiResults(Object.fromEntries(batch.results.map((result) => [result.agent, result.answer])));
+      if (batch.failures.length) setAiError(batch.failures.map((failure) => failure.message).join(' '));
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : 'AI case analysis could not be completed.');
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   if (loading) return <LoadingState message="Loading case..." />;
   if (error) return <EmptyState icon={<FileText size={30} />} title="Case could not be loaded" description={error} action={<Link className="btn-outline" to="/app/cases"><ArrowLeft size={16} /> Back to cases</Link>} />;
   if (!caseData) return <EmptyState icon={<FileText size={30} />} title="Case not found" description="This case may not exist or may not be assigned to your account." action={<Link className="btn-outline" to="/app/cases"><ArrowLeft size={16} /> Back to cases</Link>} />;
@@ -88,6 +110,7 @@ export function CaseDetail() {
           {caseData.tags.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{caseData.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div>}
         </Card>
       </div>
+      <Card className="mt-5 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-navy-900">AI case summary and strategy</h2><p className="mt-1 text-sm text-navy-500">The summary and strategy agents review this case, its recorded parties, and its timeline.</p></div><button type="button" className="btn-primary" onClick={() => void runCaseAnalysis()} disabled={aiLoading}><Brain size={16} />{aiLoading ? 'Analyzing...' : 'Run case analysis'}</button></div>{aiLoading && <div className="mt-4"><LoadingState message="Running the case summary and strategy agents..." /></div>}{aiError && <p role="alert" className="mt-3 text-sm text-danger-700">{aiError}</p>}{(['case_summary', 'case_strategy'] as const).map((agent) => aiResults[agent] && <section key={agent} className="mt-4 border-t border-navy-100 pt-4"><h3 className="font-medium capitalize text-navy-800">{agent.replace(/_/g, ' ')}</h3><p className="mt-2 whitespace-pre-line text-sm leading-6 text-navy-700">{aiResults[agent]}</p></section>)}<p className="mt-4 border-t border-navy-100 pt-3 text-xs text-navy-500">AI suggestions are not verified legal conclusions or predictions. Review every fact, authority, deadline, and recommendation before use.</p></Card>
       <Card className="mt-5 p-5">
         <h2 className="mb-3 font-semibold text-navy-900">Parties</h2>
         {partyError ? <p role="alert" className="text-sm text-danger-700">Parties could not be loaded: {partyError}</p> : parties.length === 0 ? <p className="text-sm text-navy-500">No party details are recorded.</p> : <ul className="grid gap-3 sm:grid-cols-2">{parties.map((party) => <li key={party.id} className="rounded-lg bg-navy-50 p-3"><p className="font-medium text-sm text-navy-800">{party.name}</p><p className="mt-1 text-xs capitalize text-navy-500">{party.role}{party.counsel ? ` · Counsel: ${party.counsel}` : ''}</p></li>)}</ul>}

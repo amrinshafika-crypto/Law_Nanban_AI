@@ -6,6 +6,7 @@ import { useCases, useDocuments } from '@/lib/hooks';
 import { detectFileType, extractTextFromFile } from '@/lib/fileExtraction';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import { runProfessionalAgents } from '@/lib/professionalAi';
 
 export function Documents() {
   const { documents, loading, error: documentsError } = useDocuments();
@@ -13,6 +14,8 @@ export function Documents() {
   const { user } = useAuth();
   const [analysis, setAnalysis] = useState<DocumentAnalysisResult | null>(null);
   const [analysisRun, setAnalysisRun] = useState<DocumentAnalysisRun | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState('');
+  const [aiError, setAiError] = useState('');
   const [fileName, setFileName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +31,8 @@ export function Documents() {
     setSelectedFile(file);
     setAnalysis(null);
     setAnalysisRun(null);
+    setAiAnalysis('');
+    setAiError('');
     setFileName(file.name);
     setError(null);
     const fileType = detectFileType(file.name);
@@ -44,7 +49,7 @@ export function Documents() {
   async function analyzeFile() {
     if (!selectedFile || busy) return;
     const file = selectedFile;
-    setBusy(true); setAnalysis(null); setAnalysisRun(null); setError(null); setDownloadUrl('');
+    setBusy(true); setAnalysis(null); setAnalysisRun(null); setAiAnalysis(''); setAiError(''); setError(null); setDownloadUrl('');
     let recordId = '';
     try {
       const text = await extractTextFromFile(file);
@@ -70,8 +75,21 @@ export function Documents() {
       setAnalysisRun(response);
       const result = response.result;
       setAnalysis(result);
+      let generatedAnalysis = '';
+      if (!text.trim()) {
+        setAiError('No readable document text was extracted. Professional AI analysis needs text and cannot run OCR here.');
+      } else {
+        try {
+          const batch = await runProfessionalAgents(['document_intelligence'], { fileName: file.name, extractedText: text });
+          generatedAnalysis = batch.results[0]?.answer || '';
+          setAiAnalysis(generatedAnalysis);
+          if (batch.failures.length) setAiError(batch.failures[0].message);
+        } catch (caught) {
+          setAiError(caught instanceof Error ? caught.message : 'Professional AI document analysis could not be completed.');
+        }
+      }
       if (recordId) {
-        const summary = JSON.stringify({ quickSummary: result.quickSummary, detailedSummary: result.detailedSummary, parties: result.partyRoles, identifiers: result.identifiers, product: result.product, timeline: result.timeline, financialAmounts: result.financialAmounts, keyPoints: result.keyPoints, reviewIssues: result.reviewIssues, evidence: result.evidence, missingInfo: result.missingInfo, wordCount: result.wordCount, verification: response.verificationResult }, null, 2);
+        const summary = JSON.stringify({ quickSummary: result.quickSummary, detailedSummary: result.detailedSummary, professionalAiAnalysis: generatedAnalysis || null, parties: result.partyRoles, identifiers: result.identifiers, product: result.product, timeline: result.timeline, financialAmounts: result.financialAmounts, keyPoints: result.keyPoints, reviewIssues: result.reviewIssues, evidence: result.evidence, missingInfo: result.missingInfo, wordCount: result.wordCount, verification: response.verificationResult }, null, 2);
         const { error: summaryError } = await supabase.from('document_summaries').insert({ document_id: recordId, summary_type: 'quick', content: summary });
         const { error: statusError } = await supabase.from('documents').update({ status: 'analyzed' }).eq('id', recordId);
         if (summaryError || statusError) setError('Analysis completed, but its saved record could not be fully updated.');
@@ -125,6 +143,7 @@ export function Documents() {
             {analysisRun && <Badge color={analysisRun.verified ? 'success' : 'warning'}>{analysisRun.verified ? 'Verified enough for review' : 'Needs review'}</Badge>}
           </div>
           <button type="button" onClick={downloadSummary} className="btn-outline mt-3"><Download size={15} />Download summary</button>
+          <section className="mt-4 rounded-lg border border-accent-100 bg-accent-50/40 p-4"><h3 className="font-semibold text-navy-900">Professional AI document analysis</h3>{busy ? <LoadingState message="Running the authenticated document analysis agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <p className="mt-2 whitespace-pre-line text-sm leading-6 text-navy-700">{aiAnalysis}</p> : <p className="mt-2 text-sm text-navy-600">AI analysis has not been completed for this document.</p>}<p className="mt-3 text-xs text-navy-500">AI output is a working analysis. Confirm facts, provisions, and deadlines against the original document.</p></section>
           <p className="mt-3 text-sm leading-6 text-navy-700">{analysis.overview}</p>
           {analysis.identifiers.length > 0 && <section className="mt-4"><h3 className="font-medium text-navy-800">Identifiers and subject</h3>{analysis.identifiers.map((item) => <p key={`${item.label}-${item.value}`} className="text-sm text-navy-600 mt-1"><strong>{item.label}:</strong> {item.value}</p>)}{analysis.product.value && <p className="text-sm text-navy-600 mt-1"><strong>Product / subject:</strong> {analysis.product.value}</p>}</section>}
           {analysis.financialAmounts.length > 0 && <section className="mt-4"><h3 className="font-medium text-navy-800">Financial amounts</h3><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{analysis.financialAmounts.map((amount, index) => <li key={`${amount.kind}-${amount.original}-${index}`}>{amount.kind.replace(/_/g, ' ')}: {amount.original}{amount.currency ? '' : ' · currency uncertain; verify original'}</li>)}</ul></section>}

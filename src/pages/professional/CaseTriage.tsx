@@ -1,7 +1,8 @@
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, Brain } from 'lucide-react';
-import { Badge, Card, EmptyState, PageHeader } from '@/components/ui';
+import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/ui';
 import { orchestrate, type OrchestratorResult, type TriageResult } from '@/lib/agents';
+import { runProfessionalAgents } from '@/lib/professionalAi';
 import type { CaseCategory } from '@/types';
 
 const categories: CaseCategory[] = ['criminal', 'civil', 'family', 'property', 'consumer', 'cyber', 'labor', 'constitutional', 'corporate', 'tax', 'other'];
@@ -11,6 +12,9 @@ export function CaseTriage() {
   const [category, setCategory] = useState<CaseCategory>('other');
   const [result, setResult] = useState<TriageResult | null>(null);
   const [orchestratorResult, setOrchestratorResult] = useState<OrchestratorResult | null>(null);
+  const [aiAnalysis, setAiAnalysis] = useState('');
+  const [aiError, setAiError] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -18,6 +22,18 @@ export function CaseTriage() {
       const response = await orchestrate('triage', { description, category }, []);
       setOrchestratorResult(response);
       setResult(response.result as TriageResult);
+      setAiAnalysis('');
+      setAiError('');
+      setAnalyzing(true);
+      try {
+        const batch = await runProfessionalAgents(['triage'], { description, selectedCategory: category });
+        setAiAnalysis(batch.results[0]?.answer || '');
+        if (batch.failures.length) setAiError(batch.failures[0].message);
+      } catch (error) {
+        setAiError(error instanceof Error ? error.message : 'Professional AI triage could not be completed.');
+      } finally {
+        setAnalyzing(false);
+      }
     } catch (error) {
       setOrchestratorResult(null);
       setResult(null);
@@ -27,13 +43,13 @@ export function CaseTriage() {
 
   return (
     <>
-      <PageHeader title="Smart Case Triage" subtitle="Pattern-based analysis of the information you provide. Review every finding before use." />
+      <PageHeader title="Smart Case Triage" subtitle="Combine local fact-pattern checks with server-side AI analysis. Review every finding before use." />
       <div className="grid lg:grid-cols-2 gap-5">
         <Card className="p-5">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div><label className="label" htmlFor="triage-description">Case description</label><textarea id="triage-description" className="input min-h-44" required value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the issue, key events, urgency, and any known deadlines..." /></div>
             <div><label className="label" htmlFor="triage-category">Known category (optional)</label><select id="triage-category" className="input" value={category} onChange={(event) => setCategory(event.target.value as CaseCategory)}>{categories.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select></div>
-            <button type="submit" className="btn-primary"><Brain size={16} /> Analyze description</button>
+            <button type="submit" className="btn-primary" disabled={analyzing}><Brain size={16} />{analyzing ? 'Analyzing...' : 'Analyze description'}</button>
           </form>
         </Card>
         <Card className="p-5">
@@ -45,6 +61,7 @@ export function CaseTriage() {
               {result.missingInfo.length > 0 && <div><h2 className="font-semibold text-navy-800">Information to confirm</h2><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{result.missingInfo.map((item) => <li key={item}>{item}</li>)}</ul></div>}
               <div><h2 className="font-semibold text-navy-800">Suggested next steps</h2><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{result.nextSteps.map((item) => <li key={item}>{item}</li>)}</ul></div>
               {result.urgencyIndicators.length > 0 && <p className="flex gap-2 text-sm text-warning-800"><AlertTriangle size={17} /> Indicators detected: {result.urgencyIndicators.join(', ')}</p>}
+              <div className="border-t border-navy-100 pt-3"><h2 className="font-semibold text-navy-800">AI case triage</h2>{analyzing ? <LoadingState message="Running the authenticated professional triage agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <p className="mt-2 whitespace-pre-line text-sm leading-6 text-navy-700">{aiAnalysis}</p> : null}</div>
               {orchestratorResult?.verificationResult && (
                 <div className="border-t border-navy-100 pt-3">
                   <div className="flex items-center justify-between gap-2">

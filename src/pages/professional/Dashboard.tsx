@@ -1,14 +1,36 @@
-import { ArrowRight, CalendarDays, FileText, FolderKanban, ListTodo } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowRight, Brain, CalendarDays, FileText, FolderKanban, ListTodo } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, LoadingState, PageHeader, StatCard, statusBadge } from '@/components/ui';
 import { useAgentTasks, useCases, useDocuments, useHearings } from '@/lib/hooks';
+import { runProfessionalAgents } from '@/lib/professionalAi';
 
 export function Dashboard() {
   const { cases, loading, error } = useCases();
   const { hearings, loading: hearingsLoading, error: hearingsError } = useHearings();
   const { tasks, loading: tasksLoading } = useAgentTasks();
   const { documents, loading: documentsLoading, error: documentsError } = useDocuments();
+  const [aiInsight, setAiInsight] = useState('');
+  const [aiError, setAiError] = useState('');
+  const [generatingInsight, setGeneratingInsight] = useState(false);
   const upcoming = hearings.filter((hearing) => new Date(hearing.hearing_date) >= new Date()).slice(0, 5);
+
+  async function generateInsight() {
+    if (generatingInsight || cases.length === 0) return;
+    setGeneratingInsight(true); setAiInsight(''); setAiError('');
+    try {
+      const batch = await runProfessionalAgents(['case_summary'], {
+        cases: cases.slice(0, 8).map((item) => ({ caseNumber: item.case_number, title: item.title, description: item.description, category: item.category, status: item.status, priority: item.priority, filingDate: item.filing_date, nextHearingDate: item.next_hearing_date })),
+        upcomingHearings: upcoming.map((item) => ({ title: item.title, hearingDate: item.hearing_date, court: item.court_name })),
+      });
+      setAiInsight(batch.results[0]?.answer || '');
+      if (batch.failures.length) setAiError(batch.failures[0].message);
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : 'AI case insights could not be generated.');
+    } finally {
+      setGeneratingInsight(false);
+    }
+  }
 
   return (
     <>
@@ -22,6 +44,7 @@ export function Dashboard() {
             <StatCard label="Upcoming hearings" value={hearingsLoading || hearingsError ? '—' : upcoming.length} icon={<CalendarDays size={20} />} color="gold" />
             <StatCard label="Pending agent tasks" value={tasksLoading ? '—' : tasks.filter((task) => task.status === 'pending' || task.status === 'running').length} icon={<ListTodo size={20} />} color="accent" />
           </div>
+          <Card className="mb-6 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-navy-900">AI case insights</h2><p className="mt-1 text-sm text-navy-500">Generate a review summary from up to eight assigned cases and their upcoming hearing dates.</p></div><button type="button" className="btn-primary" onClick={() => void generateInsight()} disabled={generatingInsight || cases.length === 0}><Brain size={16} />{generatingInsight ? 'Generating...' : 'Generate insights'}</button></div>{generatingInsight && <div className="mt-3"><LoadingState message="Running the authenticated case summary agent..." /></div>}{aiError && <p role="alert" className="mt-3 text-sm text-danger-700">{aiError}</p>}{aiInsight && <p className="mt-4 whitespace-pre-line border-t border-navy-100 pt-4 text-sm leading-6 text-navy-700">{aiInsight}</p>}<p className="mt-3 text-xs text-navy-500">AI-generated prioritisation is advisory. Verify each case record and date; this is not an outcome prediction.</p></Card>
           <div className="grid lg:grid-cols-2 gap-6">
             <Card className="p-5">
               <div className="flex items-center justify-between mb-4">

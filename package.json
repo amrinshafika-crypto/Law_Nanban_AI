@@ -9,6 +9,7 @@
     "test:citizen-markdown": "node --test tests/citizen-markdown.test.mjs",
     "test:document-analysis": "node --test tests/document-analysis.test.mjs",
     "test:legal-aid-directory": "node --test tests/legal-aid-directory.test.mjs",
+    "test:professional-ai": "node --test tests/professional-ai.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json"

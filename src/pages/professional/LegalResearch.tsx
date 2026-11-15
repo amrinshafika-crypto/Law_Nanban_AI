@@ -3,7 +3,7 @@ import { BookOpen, Search } from 'lucide-react';
 import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/ui';
 import { orchestrate, type OrchestratorResult, type ResearchResult } from '@/lib/agents';
 import { useLegalReferences } from '@/lib/hooks';
-import { supabase } from '@/lib/supabase';
+import { runProfessionalAgents } from '@/lib/professionalAi';
 
 export function LegalResearch() {
   const { references, loading, error } = useLegalReferences();
@@ -16,15 +16,20 @@ export function LegalResearch() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const response = await orchestrate('legal_research', { query }, references);
-    setOrchestratorResult(response);
-    setResult(response.result as ResearchResult);
     setAiAnswer(''); setAiError(''); setResearching(true);
-    const matched = (response.result as ResearchResult).references.slice(0, 5).map((item) => ({ title: item.title, citation: item.citation, source: item.source, sourceUrl: item.source_url, jurisdiction: item.jurisdiction, verified: item.verified, summary: item.summary?.slice(0, 280) }));
-    const { data, error: invokeError } = await supabase.functions.invoke('law-nanban-chat', { body: { mode: 'research', question: JSON.stringify({ query, availableReferenceRecords: matched }) } });
-    setResearching(false);
-    if (invokeError || typeof data?.answer !== 'string') setAiError(invokeError?.message || 'AI research response was unavailable.');
-    else setAiAnswer(data.answer);
+    try {
+      const response = await orchestrate('legal_research', { query }, references);
+      setOrchestratorResult(response);
+      setResult(response.result as ResearchResult);
+      const matched = (response.result as ResearchResult).references.slice(0, 5).map((item) => ({ title: item.title, citation: item.citation, source: item.source, sourceUrl: item.source_url, jurisdiction: item.jurisdiction, verified: item.verified, summary: item.summary?.slice(0, 280) }));
+      const batch = await runProfessionalAgents(['legal_research'], { query, availableReferenceRecords: matched });
+      setAiAnswer(batch.results[0]?.answer || '');
+      if (batch.failures.length) setAiError(batch.failures[0].message);
+    } catch (caught) {
+      setAiError(caught instanceof Error ? caught.message : 'AI research response was unavailable.');
+    } finally {
+      setResearching(false);
+    }
   }
 
   return (

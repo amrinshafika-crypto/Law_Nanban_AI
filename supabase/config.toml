@@ -1,2 +1,5 @@
 [functions.law-nanban-chat]
 verify_jwt = false
+
+[functions.law-nanban-professional-ai]
+verify_jwt = true
