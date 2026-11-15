@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FolderKanban, Brain, FileText, GitBranch,
   BookOpen, Calendar, HeartHandshake, Bot, BarChart3, Settings, PenTool,
-  LogOut, Menu, X, Bell, Search, ShieldCheck,
+  LogOut, Menu, X, Bell, Search, ShieldCheck, FlaskConical,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Logo } from '@/components/Logo';
@@ -20,6 +20,7 @@ const navItems = [
   { to: '/app/calendar', label: 'Hearing Calendar', icon: Calendar },
   { to: '/app/legal-aid', label: 'Legal Aid Resources', icon: HeartHandshake },
   { to: '/app/assistant', label: 'AI Assistant', icon: Bot },
+  { to: '/app/demo', label: 'Demo Environment', icon: FlaskConical },
   { to: '/app/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/app/settings', label: 'Settings', icon: Settings },
 ];

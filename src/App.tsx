@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { LandingPage } from '@/pages/LandingPage';
 import { AuthPage } from '@/pages/auth/AuthPage';
+import { AuthCallbackPage } from '@/pages/auth/AuthCallbackPage';
 import { ProfessionalLayout } from '@/components/ProfessionalLayout';
 import { CitizenLayout } from '@/components/CitizenLayout';
 import { Dashboard } from '@/pages/professional/Dashboard';
@@ -17,6 +18,7 @@ import { LegalAidResources } from '@/pages/professional/LegalAidResources';
 import { AIAssistant } from '@/pages/professional/AIAssistant';
 import { Analytics } from '@/pages/professional/Analytics';
 import { Settings } from '@/pages/professional/Settings';
+import { DemoEnvironment } from '@/pages/professional/DemoEnvironment';
 import { Drafting } from '@/pages/professional/Drafting';
 import { CitizenHome } from '@/pages/citizen/CitizenHome';
 import { CitizenAsk } from '@/pages/citizen/CitizenAsk';
@@ -71,7 +73,7 @@ function RequireAuth({ children, role, allowGuest = false }: { children: ReactNo
     return <Navigate to="/signin" replace />;
   }
   if (profile.role !== role && profile.role !== 'admin') {
-    if (role === 'professional') return <div className="min-h-screen flex items-center justify-center p-6"><div className="max-w-md rounded-xl border border-gold-200 bg-white p-6 text-center shadow-card"><h1 className="font-serif text-xl font-semibold text-navy-900">Professional access required</h1><p className="mt-3 text-sm leading-6 text-navy-600">This account is registered as a {profile.role}. The professional workspace requires an authorized professional account. Contact your Law Nanban administrator to request professional access.</p><div className="mt-5 flex justify-center gap-3"><button type="button" className="btn-outline" onClick={() => navigate('/portal')}>Open citizen portal</button><button type="button" className="btn-primary" onClick={async () => { const result = await signOut(); if (result.error) setSignOutError(result.error); else navigate('/signin', { replace: true }); }}>Sign out</button></div>{signOutError && <p role="alert" className="mt-3 text-sm text-danger-700">{signOutError}</p>}</div></div>;
+    if (role === 'professional') return <div className="min-h-screen flex items-center justify-center p-6"><div className="max-w-md rounded-xl border border-gold-200 bg-white p-6 text-center shadow-card"><h1 className="font-serif text-xl font-semibold text-navy-900">Professional account required</h1><p className="mt-3 text-sm leading-6 text-navy-600">This account is registered as a Citizen. Sign-in uses the role already stored on your account.</p><div className="mt-5 flex justify-center gap-3"><button type="button" className="btn-outline" onClick={() => navigate('/portal')}>Open citizen portal</button><button type="button" className="btn-primary" onClick={async () => { const result = await signOut(); if (result.error) setSignOutError(result.error); else navigate('/signin', { replace: true }); }}>Sign out</button></div>{signOutError && <p role="alert" className="mt-3 text-sm text-danger-700">{signOutError}</p>}</div></div>;
     return <Navigate to={profile.role === 'professional' ? '/app' : '/portal'} replace />;
   }
   return <>{children}</>;
@@ -96,6 +98,7 @@ function ProfessionalRoutes() {
           <Route path="legal-aid" element={<LegalAidResources />} />
           <Route path="library" element={<LegalLibrary />} />
           <Route path="assistant" element={<AIAssistant />} />
+          <Route path="demo" element={<DemoEnvironment />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/app" replace />} />
@@ -157,6 +160,7 @@ export default function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/signin" element={<AuthPage mode="signin" />} />
           <Route path="/signup" element={<AuthPage mode="signup" />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
           <Route path="/app/*" element={<ProfessionalRoutes />} />
           <Route path="/portal/*" element={<CitizenRoutes />} />
           <Route path="*" element={<Navigate to="/" replace />} />

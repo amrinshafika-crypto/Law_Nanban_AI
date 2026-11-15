@@ -89,10 +89,31 @@ async function hasProfessionalSession(request: Request) {
 
 function providerError(status: number): { code: string; message: string; httpStatus: number } {
   if (status === 401 || status === 403) return { code: 'AI_PROVIDER_AUTH', message: 'The AI provider credentials need attention.', httpStatus: 502 };
-  if (status === 429) return { code: 'AI_RATE_LIMIT', message: 'The AI service is busy. Try again shortly.', httpStatus: 503 };
+  if (status === 429) return { code: 'AI_RATE_LIMIT', message: 'Professional AI has reached a temporary provider usage limit. Please wait for the limit to reset, then try again.', httpStatus: 503 };
   if (status === 404) return { code: 'AI_MODEL_UNAVAILABLE', message: 'The configured AI model is unavailable. Check GROQ_MODEL.', httpStatus: 502 };
   if (status >= 500) return { code: 'AI_UPSTREAM', message: 'The AI provider is temporarily unavailable.', httpStatus: 502 };
   return { code: 'AI_REQUEST_REJECTED', message: 'The AI provider rejected this request.', httpStatus: 502 };
+}
+
+function safeProviderErrorDetails(payloadText: string, apiKey: string) {
+  let payload: unknown;
+  try { payload = JSON.parse(payloadText.slice(0, 8_192)); } catch { payload = null; }
+  const providerError = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+  const rawCode = providerError?.code ?? providerError?.type;
+  const code = typeof rawCode === 'string' || typeof rawCode === 'number'
+    ? String(rawCode).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 80)
+    : 'unknown';
+  const rawMessage = typeof providerError?.message === 'string' ? providerError.message : '';
+  const message = rawMessage
+    .replaceAll(apiKey, '[REDACTED]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\bgsk_[a-zA-Z0-9_-]+/gi, '[REDACTED]')
+    .replace(/(api[_ -]?key|authorization)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+  return { code, message: message || 'Provider returned no safe error message.' };
 }
 
 async function runAgent(agent: AgentName, contextJson: string, apiKey: string, model: string): Promise<AgentSuccess | AgentFailure> {
@@ -123,9 +144,14 @@ async function runAgent(agent: AgentName, contextJson: string, apiKey: string, m
         }),
       });
       if (!response.ok) {
-        console.warn('Professional AI upstream response', { agent, status: response.status, elapsedMs: Date.now() - startedAt, attempt: attempt + 1 });
+        const providerPayload = await response.text().catch(() => '');
+        const providerDetails = safeProviderErrorDetails(providerPayload, apiKey);
+        console.warn('Professional AI upstream response', {
+          stage: 'groq_chat_completion', agent, model, status: response.status,
+          providerCode: providerDetails.code, providerMessage: providerDetails.message,
+          elapsedMs: Date.now() - startedAt, attempt: attempt + 1,
+        });
         if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
-          await response.body?.cancel();
           clearTimeout(timer);
           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
           continue;
@@ -161,14 +187,14 @@ async function runAgent(agent: AgentName, contextJson: string, apiKey: string, m
     } catch (error) {
       clearTimeout(timer);
       if (controller.signal.aborted) {
-        console.warn('Professional AI agent timed out', { agent, elapsedMs: Date.now() - startedAt, timeoutMs: REQUEST_TIMEOUT_MS });
+        console.warn('Professional AI agent timed out', { stage: 'groq_chat_completion', agent, model, elapsedMs: Date.now() - startedAt, timeoutMs: REQUEST_TIMEOUT_MS });
         return { agent, code: 'AI_TIMEOUT', message: 'The AI request timed out. Shorten the supplied material and try again.' };
       }
       if (attempt === 0) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
         continue;
       }
-      console.warn('Professional AI network failure', { agent, elapsedMs: Date.now() - startedAt, errorName: error instanceof Error ? error.name : 'UnknownError' });
+      console.warn('Professional AI network failure', { stage: 'groq_chat_completion', agent, model, elapsedMs: Date.now() - startedAt, errorName: error instanceof Error ? error.name : 'UnknownError' });
       return { agent, code: 'AI_NETWORK', message: 'The AI service could not be reached. Try again shortly.' };
     }
   }
@@ -199,9 +225,9 @@ Deno.serve(async (request: Request) => {
   if (!contextJson || contextJson.length > MAX_CONTEXT_CHARS) {
     return errorResponse(413, 'CONTEXT_TOO_LARGE', `Professional AI context must be ${MAX_CONTEXT_CHARS} characters or less.`);
   }
-  const apiKey = Deno.env.get('GROQ_API_KEY');
+  const apiKey = Deno.env.get('GROQ_API_KEY_2');
   if (!apiKey) {
-    console.error('Professional AI configuration missing GROQ_API_KEY.');
+    console.error('Professional AI configuration missing GROQ_API_KEY_2.');
     return errorResponse(503, 'AI_NOT_CONFIGURED', 'Professional AI is not configured yet. Contact your administrator.');
   }
   const configuredModel = Deno.env.get('GROQ_MODEL') || DEFAULT_MODEL;

@@ -7,6 +7,7 @@ import { detectFileType, extractTextFromFile } from '@/lib/fileExtraction';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { runProfessionalAgents } from '@/lib/professionalAi';
+import { ProfessionalMarkdownMessage } from '@/components/ProfessionalMarkdownMessage';
 
 export function Documents() {
   const { documents, loading, error: documentsError } = useDocuments();
@@ -143,7 +144,7 @@ export function Documents() {
             {analysisRun && <Badge color={analysisRun.verified ? 'success' : 'warning'}>{analysisRun.verified ? 'Verified enough for review' : 'Needs review'}</Badge>}
           </div>
           <button type="button" onClick={downloadSummary} className="btn-outline mt-3"><Download size={15} />Download summary</button>
-          <section className="mt-4 rounded-lg border border-accent-100 bg-accent-50/40 p-4"><h3 className="font-semibold text-navy-900">Professional AI document analysis</h3>{busy ? <LoadingState message="Running the authenticated document analysis agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <p className="mt-2 whitespace-pre-line text-sm leading-6 text-navy-700">{aiAnalysis}</p> : <p className="mt-2 text-sm text-navy-600">AI analysis has not been completed for this document.</p>}<p className="mt-3 text-xs text-navy-500">AI output is a working analysis. Confirm facts, provisions, and deadlines against the original document.</p></section>
+          <section className="mt-4 rounded-lg border border-accent-100 bg-accent-50/40 p-4"><h3 className="font-semibold text-navy-900">Professional AI document analysis</h3>{busy ? <LoadingState message="Running the authenticated document analysis agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <ProfessionalMarkdownMessage content={aiAnalysis} className="mt-2 text-sm leading-6 text-navy-700" /> : <p className="mt-2 text-sm text-navy-600">AI analysis has not been completed for this document.</p>}<p className="mt-3 text-xs text-navy-500">AI output is a working analysis. Confirm facts, provisions, and deadlines against the original document.</p></section>
           <p className="mt-3 text-sm leading-6 text-navy-700">{analysis.overview}</p>
           {analysis.identifiers.length > 0 && <section className="mt-4"><h3 className="font-medium text-navy-800">Identifiers and subject</h3>{analysis.identifiers.map((item) => <p key={`${item.label}-${item.value}`} className="text-sm text-navy-600 mt-1"><strong>{item.label}:</strong> {item.value}</p>)}{analysis.product.value && <p className="text-sm text-navy-600 mt-1"><strong>Product / subject:</strong> {analysis.product.value}</p>}</section>}
           {analysis.financialAmounts.length > 0 && <section className="mt-4"><h3 className="font-medium text-navy-800">Financial amounts</h3><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{analysis.financialAmounts.map((amount, index) => <li key={`${amount.kind}-${amount.original}-${index}`}>{amount.kind.replace(/_/g, ' ')}: {amount.original}{amount.currency ? '' : ' · currency uncertain; verify original'}</li>)}</ul></section>}

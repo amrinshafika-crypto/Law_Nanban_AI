@@ -10,12 +10,33 @@ interface AuthContextValue {
   profileError: string | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null; role: UserRole | null }>;
-  signUp: (email: string, password: string, displayName: string) => Promise<{ error: string | null; confirmationRequired: boolean }>;
+  signUp: (email: string, password: string, displayName: string, intent?: 'citizen' | 'professional', registrationIntent?: string) => Promise<{ error: string | null; confirmationRequired: boolean }>;
+  signInWithGoogle: (intent: 'citizen' | 'professional') => Promise<{ error: string | null }>;
+  completeOAuthSignIn: () => Promise<{ error: string | null; role: UserRole | null }>;
+  prepareProfessionalRegistration: () => Promise<{ error: string | null; registrationIntent: string | null }>;
+  completeProfessionalRegistration: (registrationIntent: string) => Promise<ProfessionalRegistrationResult>;
   signOut: () => Promise<{ error: string | null }>;
   refreshProfile: () => Promise<void>;
 }
 
+type ProfessionalRegistrationResult = {
+  error: string | null;
+  role: UserRole | null;
+  registrationIntentInvalid?: boolean;
+};
+
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+async function registrationFunctionError(error: unknown, fallback: string) {
+  const context = error && typeof error === 'object' ? (error as { context?: unknown }).context : undefined;
+  if (context instanceof Response) {
+    try {
+      const payload = await context.clone().json() as { error?: { message?: unknown } };
+      if (typeof payload.error?.message === 'string') return payload.error.message;
+    } catch { /* Keep a safe default. */ }
+  }
+  return fallback;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -133,12 +154,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [restoreSession]);
 
-  const signUp = useCallback(async (email: string, password: string, displayName: string) => {
+  const signUp = useCallback(async (email: string, password: string, displayName: string, intent: 'citizen' | 'professional' = 'citizen', registrationIntent?: string) => {
+    if (intent === 'professional' && !registrationIntent) {
+      return { error: 'Professional registration could not be started. Please try again.', confirmationRequired: false };
+    }
     try {
+      const options: { data: { display_name: string }; emailRedirectTo?: string } = {
+        data: { display_name: displayName },
+      };
+      if (intent === 'professional' && registrationIntent) {
+        const callback = new URL('/auth/callback', window.location.origin);
+        callback.searchParams.set('registration_intent', registrationIntent);
+        options.emailRedirectTo = callback.toString();
+      }
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { display_name: displayName } },
+        options,
       });
       if (error) return { error: error.message, confirmationRequired: false };
       if (!data.user) return { error: 'Account creation did not return a user. Please try again.', confirmationRequired: false };
@@ -154,6 +186,83 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null, confirmationRequired: false };
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Sign up failed.', confirmationRequired: false };
+    }
+  }, [restoreSession]);
+
+  const prepareProfessionalRegistration = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('law-nanban-professional-registration', {
+        body: { action: 'prepare' },
+      });
+      if (error) return { error: await registrationFunctionError(error, 'Professional registration could not be started.'), registrationIntent: null };
+      if (typeof data?.registrationIntent !== 'string' || data.registrationIntent.length > 2_048) {
+        return { error: 'Professional registration returned an invalid response.', registrationIntent: null };
+      }
+      return { error: null, registrationIntent: data.registrationIntent };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Professional registration could not be started.', registrationIntent: null };
+    }
+  }, []);
+
+  const signInWithGoogle = useCallback(async (intent: 'citizen' | 'professional') => {
+    try {
+      const registration = intent === 'professional' ? await prepareProfessionalRegistration() : null;
+      if (registration?.error || (intent === 'professional' && !registration?.registrationIntent)) {
+        return { error: registration?.error || 'Professional registration could not be started.' };
+      }
+      const callback = new URL('/auth/callback', window.location.origin);
+      if (registration?.registrationIntent) callback.searchParams.set('registration_intent', registration.registrationIntent);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: callback.toString() },
+      });
+      if (error) return { error: error.message };
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Google sign-in could not be started.' };
+    }
+  }, [prepareProfessionalRegistration]);
+
+  const completeOAuthSignIn = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) return { error: error.message, role: null };
+      if (!data.session) return { error: 'Google sign-in did not create an active session. Please try again.', role: null };
+      const restored = await restoreSession(data.session);
+      return restored.error
+        ? { error: `Signed in, but account access could not be validated: ${restored.error}`, role: null }
+        : { error: null, role: restored.profile?.role ?? null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Google sign-in could not be completed.', role: null };
+    }
+  }, [restoreSession]);
+
+  const completeProfessionalRegistration = useCallback(async (registrationIntent: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('law-nanban-professional-registration', {
+        body: { action: 'finalize', registrationIntent },
+      });
+      if (error) {
+        return { error: await registrationFunctionError(error, 'Professional registration could not be completed.'), role: null };
+      }
+      if (data?.role === 'citizen') {
+        return {
+          error: 'This Professional registration link is invalid or has expired. Please restart Professional registration.',
+          role: null,
+          registrationIntentInvalid: true,
+        };
+      }
+      if (data?.role !== 'professional' && data?.role !== 'admin') {
+        return { error: 'Professional registration returned an invalid account role.', role: null };
+      }
+      const { data: sessionData } = await supabase.auth.getSession();
+      const restored = await restoreSession(sessionData.session);
+      if (restored.error || restored.profile?.role !== data.role) {
+        return { error: 'The updated account role could not be verified. Refresh your session and try again.', role: null };
+      }
+      return { error: null, role: restored.profile?.role ?? null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Professional registration could not be completed.', role: null };
     }
   }, [restoreSession]);
 
@@ -173,7 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [restoreSession, session]);
 
   return (
-    <AuthContext.Provider value={{ session, user, profile, profileError, loading, signIn, signUp, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ session, user, profile, profileError, loading, signIn, signUp, signInWithGoogle, completeOAuthSignIn, prepareProfessionalRegistration, completeProfessionalRegistration, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

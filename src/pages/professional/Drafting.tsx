@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useCases } from '@/lib/hooks';
 import { runProfessionalAgents } from '@/lib/professionalAi';
+import { ProfessionalMarkdownMessage } from '@/components/ProfessionalMarkdownMessage';
 
 type DraftRecord = { id: string; case_id: string | null; document_type: string; title: string; content: string; updated_at: string };
 const documentTypes = ['Legal notice outline', 'Affidavit structure', 'Written submissions outline', 'Client case brief', 'Case chronology', 'Custom document'];
@@ -27,6 +28,7 @@ export function Drafting() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [editingContent, setEditingContent] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -47,11 +49,11 @@ export function Drafting() {
   }, [drafts, location.search]);
 
   function newDraft() {
-    setDraftId(''); setCaseId(''); setType(documentTypes[0]); setTitle(''); setParties(''); setFacts(''); setProvisions(''); setInstructions(''); setContent(''); setError(''); setMessage('');
+    setDraftId(''); setCaseId(''); setType(documentTypes[0]); setTitle(''); setParties(''); setFacts(''); setProvisions(''); setInstructions(''); setContent(''); setEditingContent(true); setError(''); setMessage('');
   }
 
   function openDraft(draft: DraftRecord) {
-    setDraftId(draft.id); setCaseId(draft.case_id || ''); setType(draft.document_type); setTitle(draft.title); setContent(draft.content); setError(''); setMessage('');
+    setDraftId(draft.id); setCaseId(draft.case_id || ''); setType(draft.document_type); setTitle(draft.title); setContent(draft.content); setEditingContent(false); setError(''); setMessage('');
     setParties(''); setFacts(''); setProvisions(''); setInstructions('');
   }
 
@@ -66,6 +68,7 @@ export function Drafting() {
       const draft = batch.results[0]?.answer.trim();
       if (!draft) throw new Error('The AI returned no draft. Please try again.');
       setContent(draft);
+      setEditingContent(false);
       setMessage('AI working draft generated. Verify every fact and provision with the source record before use.');
       if (batch.failures.length) setError(batch.failures[0].message);
     } catch (caught) {
@@ -115,8 +118,10 @@ export function Drafting() {
           </form>
         </Card>
         {content && <Card className="p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold text-navy-900">Editable draft <Badge color="warning">Requires professional review</Badge></h2><button type="button" onClick={download} className="btn-outline"><Download size={15} />Export</button></div>
-          <textarea aria-label="Editable legal draft" className="input min-h-[28rem] font-mono text-sm leading-6" maxLength={30000} value={content} onChange={(event) => setContent(event.target.value)} />
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold text-navy-900">Editable draft <Badge color="warning">Requires professional review</Badge></h2><div className="flex gap-2"><button type="button" onClick={() => setEditingContent((value) => !value)} className="btn-outline">{editingContent ? 'Preview formatted draft' : 'Edit draft source'}</button><button type="button" onClick={download} className="btn-outline"><Download size={15} />Export</button></div></div>
+          {editingContent
+            ? <textarea aria-label="Editable legal draft" className="input min-h-[28rem] font-mono text-sm leading-6" maxLength={30000} value={content} onChange={(event) => setContent(event.target.value)} />
+            : <div className="input min-h-[28rem] overflow-auto"><ProfessionalMarkdownMessage content={content} /></div>}
           <form onSubmit={(event) => void save(event)} className="mt-3 flex justify-end"><button type="submit" className="btn-primary" disabled={saving || !title.trim()}><Save size={15} />{saving ? 'Saving...' : 'Save draft'}</button></form>
         </Card>}
         {error && <p role="alert" className="text-sm text-danger-700">{error}</p>}

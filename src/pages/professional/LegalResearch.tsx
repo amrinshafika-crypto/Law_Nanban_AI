@@ -4,6 +4,7 @@ import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/
 import { orchestrate, type OrchestratorResult, type ResearchResult } from '@/lib/agents';
 import { useLegalReferences } from '@/lib/hooks';
 import { runProfessionalAgents } from '@/lib/professionalAi';
+import { ProfessionalMarkdownMessage } from '@/components/ProfessionalMarkdownMessage';
 
 export function LegalResearch() {
   const { references, loading, error } = useLegalReferences();
@@ -46,7 +47,7 @@ export function LegalResearch() {
       </Card>
       {result ? (
         <div className="space-y-4">
-          <Card className="p-5"><h2 className="font-semibold text-navy-900">AI research analysis</h2>{researching ? <LoadingState message="Preparing analysis from the matched reference records..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : <p className="mt-3 whitespace-pre-line text-sm leading-6 text-navy-700">{aiAnswer}</p>}<p className="mt-3 border-t border-navy-100 pt-3 text-xs text-navy-500">This analysis is limited to the reference records shown below. Confirm all authorities and current law from the source before relying on it.</p></Card>
+          <Card className="p-5"><h2 className="font-semibold text-navy-900">AI research analysis</h2>{researching ? <LoadingState message="Preparing analysis from the matched reference records..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : <ProfessionalMarkdownMessage content={aiAnswer} className="mt-3 text-sm leading-6 text-navy-700" />}<p className="mt-3 border-t border-navy-100 pt-3 text-xs text-navy-500">This analysis is limited to the reference records shown below. Confirm all authorities and current law from the source before relying on it.</p></Card>
           <Card className="p-5"><div className="flex items-center gap-2"><BookOpen size={18} className="text-accent-700" /><h2 className="font-semibold text-navy-900">{result.identifiedTopic}</h2></div><p className="text-sm text-navy-700 mt-3 whitespace-pre-line">{result.explanation}</p><p className="text-xs text-navy-500 mt-4 border-t border-navy-100 pt-3">{result.limitations}</p></Card>
           {orchestratorResult?.verificationResult && (
             <Card className="p-4">

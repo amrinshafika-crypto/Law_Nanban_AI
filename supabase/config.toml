@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.law-nanban-professional-ai]
 verify_jwt = true
+
+[functions.law-nanban-professional-registration]
+verify_jwt = false

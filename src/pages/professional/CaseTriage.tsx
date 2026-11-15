@@ -4,6 +4,7 @@ import { Badge, Card, EmptyState, LoadingState, PageHeader } from '@/components/
 import { orchestrate, type OrchestratorResult, type TriageResult } from '@/lib/agents';
 import { runProfessionalAgents } from '@/lib/professionalAi';
 import type { CaseCategory } from '@/types';
+import { ProfessionalMarkdownMessage } from '@/components/ProfessionalMarkdownMessage';
 
 const categories: CaseCategory[] = ['criminal', 'civil', 'family', 'property', 'consumer', 'cyber', 'labor', 'constitutional', 'corporate', 'tax', 'other'];
 
@@ -61,7 +62,7 @@ export function CaseTriage() {
               {result.missingInfo.length > 0 && <div><h2 className="font-semibold text-navy-800">Information to confirm</h2><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{result.missingInfo.map((item) => <li key={item}>{item}</li>)}</ul></div>}
               <div><h2 className="font-semibold text-navy-800">Suggested next steps</h2><ul className="list-disc pl-5 text-sm text-navy-600 mt-1">{result.nextSteps.map((item) => <li key={item}>{item}</li>)}</ul></div>
               {result.urgencyIndicators.length > 0 && <p className="flex gap-2 text-sm text-warning-800"><AlertTriangle size={17} /> Indicators detected: {result.urgencyIndicators.join(', ')}</p>}
-              <div className="border-t border-navy-100 pt-3"><h2 className="font-semibold text-navy-800">AI case triage</h2>{analyzing ? <LoadingState message="Running the authenticated professional triage agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <p className="mt-2 whitespace-pre-line text-sm leading-6 text-navy-700">{aiAnalysis}</p> : null}</div>
+              <div className="border-t border-navy-100 pt-3"><h2 className="font-semibold text-navy-800">AI case triage</h2>{analyzing ? <LoadingState message="Running the authenticated professional triage agent..." /> : aiError ? <p role="alert" className="mt-2 text-sm text-danger-700">{aiError}</p> : aiAnalysis ? <ProfessionalMarkdownMessage content={aiAnalysis} className="mt-2 text-sm leading-6 text-navy-700" /> : null}</div>
               {orchestratorResult?.verificationResult && (
                 <div className="border-t border-navy-100 pt-3">
                   <div className="flex items-center justify-between gap-2">
